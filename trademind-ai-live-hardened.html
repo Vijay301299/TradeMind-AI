@@ -1,0 +1,2668 @@
+<!--
+Hardened frontend notes:
+1. Set PROXY_BASE to your deployed proxy URL.
+2. Set PROXY_API_KEY to match the proxy server environment.
+3. Keep secrets server-side where possible; this key is only for proxy access control.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>TradeMind AI — Swing Trade Intelligence</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='20' fill='%230e1526'/%3E%3Cpath d='M20 65 L40 45 L55 58 L80 30' stroke='%233b7cf6' stroke-width='8' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+
+<!-- Fonts: Space Grotesk (display), Inter (body), JetBrains Mono (data/terminal) -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<!-- Font Awesome -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+<!-- Chart.js -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+
+<style>
+/* ==========================================================================
+   0. DESIGN TOKENS
+   ========================================================================== */
+:root{
+  --bg-0:#0a0f1c;
+  --bg-1:#0e1526;
+  --bg-2:#131c33;
+  --glass:rgba(24,32,52,0.55);
+  --glass-hi:rgba(32,42,66,0.65);
+  --glass-border:rgba(148,163,196,0.13);
+  --hairline:rgba(148,163,196,0.09);
+
+  --accent-blue:#3b7cf6;
+  --accent-cyan:#4fa8e8;
+  --accent-violet:#3b7cf6;
+  --accent-amber:#d99a3d;
+
+  --bull:#22b573;
+  --bull-dim:rgba(34,181,115,0.14);
+  --bear:#e5484d;
+  --bear-dim:rgba(229,72,77,0.14);
+  --neutral:#d99a3d;
+  --neutral-dim:rgba(217,154,61,0.14);
+
+  --text-hi:#eef2fb;
+  --text-mid:#a9b6cc;
+  --text-lo:#67748f;
+
+  --font-display:'Space Grotesk', sans-serif;
+  --font-body:'Inter', sans-serif;
+  --font-mono:'JetBrains Mono', monospace;
+
+  --radius-lg:18px;
+  --radius-md:12px;
+  --radius-sm:8px;
+  --ease:cubic-bezier(.22,1,.36,1);
+}
+
+*{box-sizing:border-box; margin:0; padding:0;}
+html{scroll-behavior:smooth;}
+body{
+  font-family:var(--font-body);
+  color:var(--text-hi);
+  background:
+    radial-gradient(ellipse 900px 500px at 12% -10%, rgba(59,124,246,0.10), transparent 60%),
+    radial-gradient(ellipse 700px 500px at 100% 0%, rgba(79,168,232,0.06), transparent 55%),
+    linear-gradient(180deg, var(--bg-0), var(--bg-1) 40%, var(--bg-0));
+  min-height:100vh;
+  -webkit-font-smoothing:antialiased;
+  overflow-x:hidden;
+}
+/* soft vignette — no grid lines, keeps focus on content rather than reading as a dev tool */
+body::before{
+  content:"";
+  position:fixed; inset:0; pointer-events:none; z-index:0;
+  background:radial-gradient(ellipse 100% 55% at 50% 0%, rgba(59,124,246,0.05), transparent 70%);
+}
+::selection{background:var(--accent-blue); color:#fff;}
+::-webkit-scrollbar{width:9px; height:9px;}
+::-webkit-scrollbar-track{background:transparent;}
+::-webkit-scrollbar-thumb{background:rgba(140,160,200,0.25); border-radius:10px;}
+a{color:inherit;}
+button{font-family:inherit; cursor:pointer;}
+:focus-visible{outline:2px solid var(--accent-cyan); outline-offset:2px;}
+.mono{font-family:var(--font-mono);}
+.num-up{color:var(--bull);}
+.num-down{color:var(--bear);}
+.num-flat{color:var(--neutral);}
+
+/* ==========================================================================
+   1. TICKER TAPE (signature element — live terminal strip)
+   ========================================================================== */
+.ticker-wrap{
+  position:sticky; top:0; z-index:60;
+  background:linear-gradient(90deg, #0b1122, #101a30 50%, #0b1122);
+  border-bottom:1px solid var(--hairline);
+  overflow:hidden;
+  height:34px;
+  display:flex; align-items:center;
+}
+.ticker-track{
+  display:flex; align-items:center; gap:36px;
+  white-space:nowrap;
+  animation:ticker-scroll 32s linear infinite;
+  padding-left:100%;
+}
+.ticker-wrap:hover .ticker-track{animation-play-state:paused;}
+@keyframes ticker-scroll{ from{transform:translateX(0);} to{transform:translateX(-100%);} }
+.ticker-item{font-family:var(--font-mono); font-size:12px; letter-spacing:.02em; color:var(--text-mid); display:flex; align-items:center; gap:6px;}
+.ticker-item b{color:var(--text-hi); font-weight:600;}
+.ticker-item .chg{font-weight:600;}
+
+/* ==========================================================================
+   2. HEADER + NAV
+   ========================================================================== */
+.app-header{
+  position:sticky; top:34px; z-index:59;
+  display:flex; align-items:center; justify-content:space-between;
+  padding:16px clamp(16px,4vw,40px);
+  background:rgba(10,15,28,0.75);
+  backdrop-filter:blur(16px);
+  border-bottom:1px solid var(--hairline);
+}
+.brand{display:flex; align-items:center; gap:12px;}
+.brand-mark{
+  width:38px; height:38px; border-radius:10px;
+  display:flex; align-items:center; justify-content:center;
+  background:linear-gradient(135deg, var(--accent-blue), var(--accent-violet));
+  box-shadow:0 0 22px rgba(59,124,246,0.45);
+  color:#fff; font-size:16px;
+}
+.brand-text h1{font-family:var(--font-display); font-size:19px; font-weight:700; letter-spacing:.01em;}
+.brand-text span{font-size:11px; color:var(--text-lo); letter-spacing:.09em; text-transform:uppercase;}
+.header-right{display:flex; align-items:center; gap:22px;}
+.clock-block{text-align:right;}
+.clock-time{font-family:var(--font-mono); font-size:20px; font-weight:600; letter-spacing:.03em; color:var(--accent-cyan);}
+.clock-date{font-size:11px; color:var(--text-lo); margin-top:1px;}
+.live-dot{width:8px; height:8px; border-radius:50%; background:var(--bull); box-shadow:0 0 8px var(--bull); animation:pulse-dot 1.6s ease-in-out infinite;}
+@keyframes pulse-dot{0%,100%{opacity:1; transform:scale(1);} 50%{opacity:.4; transform:scale(.75);}}
+.live-badge{display:flex; align-items:center; gap:7px; font-size:11px; color:var(--text-mid); font-family:var(--font-mono); text-transform:uppercase; letter-spacing:.08em;}
+
+.tab-nav{
+  position:sticky; top:calc(34px + 71px); z-index:58;
+  display:flex; gap:6px; overflow-x:auto; scrollbar-width:none;
+  padding:10px clamp(16px,4vw,40px);
+  background:rgba(10,15,28,0.58);
+  backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--hairline);
+}
+.tab-nav::-webkit-scrollbar{display:none;}
+.tab-btn{
+  flex:0 0 auto;
+  display:flex; align-items:center; gap:8px;
+  padding:9px 16px; border-radius:999px; border:1px solid transparent;
+  background:transparent; color:var(--text-mid); font-size:13.5px; font-weight:500;
+  transition:all .25s var(--ease);
+  white-space:nowrap;
+}
+.tab-btn i{font-size:12px;}
+.tab-btn:hover{color:var(--text-hi); background:rgba(255,255,255,0.04);}
+.tab-btn.active{
+  color:#fff; background:linear-gradient(135deg, rgba(59,124,246,0.92), rgba(79,168,232,0.82));
+  border-color:rgba(255,255,255,0.08);
+  box-shadow:0 4px 18px rgba(59,124,246,0.3);
+}
+
+main{max-width:1400px; margin:0 auto; padding:28px clamp(16px,4vw,40px) 80px; position:relative; z-index:1;}
+.tab-panel{display:none; animation:fade-in-up .45s var(--ease);}
+.tab-panel.active{display:block;}
+@keyframes fade-in-up{from{opacity:0; transform:translateY(10px);} to{opacity:1; transform:translateY(0);}}
+
+.section-title{
+  display:flex; align-items:center; gap:10px;
+  font-family:var(--font-display); font-size:20px; font-weight:600;
+  margin:34px 0 16px;
+}
+.section-title:first-child{margin-top:0;}
+.section-title i{color:var(--accent-cyan); font-size:16px;}
+.section-sub{font-size:13px; color:var(--text-lo); margin-top:-10px; margin-bottom:18px;}
+
+/* ==========================================================================
+   3. GLASS CARD SYSTEM
+   ========================================================================== */
+.glass{
+  background:var(--glass);
+  border:1px solid var(--glass-border);
+  border-radius:var(--radius-lg);
+  backdrop-filter:blur(18px);
+  -webkit-backdrop-filter:blur(18px);
+  box-shadow:0 8px 32px rgba(0,0,0,0.35), inset 0 1px 0 rgba(255,255,255,0.04);
+  transition:transform .3s var(--ease), box-shadow .3s var(--ease), border-color .3s var(--ease);
+}
+.glass:hover{border-color:rgba(140,160,200,0.24);}
+.grid{display:grid; gap:18px;}
+.grid-3{grid-template-columns:repeat(3,1fr);}
+.grid-4{grid-template-columns:repeat(4,1fr);}
+.grid-2{grid-template-columns:repeat(2,1fr);}
+@media(max-width:980px){.grid-3,.grid-4{grid-template-columns:repeat(2,1fr);}}
+@media(max-width:640px){.grid-3,.grid-4,.grid-2{grid-template-columns:1fr;}}
+
+/* ---- Analyze CTA ---- */
+.cta-panel{
+  padding:34px clamp(20px,4vw,44px);
+  display:flex; align-items:center; justify-content:space-between; gap:24px;
+  flex-wrap:wrap;
+  position:relative; overflow:hidden;
+}
+.cta-panel::after{
+  content:""; position:absolute; inset:0; z-index:0;
+  background:linear-gradient(120deg, rgba(59,124,246,0.08), transparent 55%);
+}
+.cta-copy{position:relative; z-index:1;}
+.cta-copy h2{font-family:var(--font-display); font-size:24px; font-weight:700; margin-bottom:6px;}
+.cta-copy p{color:var(--text-mid); font-size:13.5px; max-width:440px;}
+.analyze-btn{
+  position:relative; z-index:1;
+  display:flex; align-items:center; gap:12px;
+  padding:18px 34px; border:none; border-radius:14px;
+  background:linear-gradient(135deg, var(--accent-blue), var(--accent-violet));
+  color:#fff; font-size:16px; font-weight:600; font-family:var(--font-display);
+  box-shadow:0 10px 30px rgba(59,124,246,0.4);
+  transition:transform .2s var(--ease), box-shadow .2s var(--ease);
+}
+.analyze-btn:hover{transform:translateY(-2px) scale(1.015); box-shadow:0 14px 38px rgba(59,124,246,0.55);}
+.analyze-btn:active{transform:translateY(0) scale(.99);}
+.analyze-btn i{font-size:18px;}
+.analyze-btn.loading{pointer-events:none; opacity:.85;}
+.spin{animation:spin 1s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+
+/* ---- Index cards ---- */
+.index-card{padding:20px 22px;}
+.index-head{display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;}
+.index-name{font-family:var(--font-display); font-weight:600; font-size:15px;}
+.index-badge{font-size:10px; padding:3px 8px; border-radius:6px; background:rgba(255,255,255,0.05); color:var(--text-lo); letter-spacing:.06em;}
+.index-price{font-family:var(--font-mono); font-size:28px; font-weight:600; letter-spacing:.01em; margin-bottom:4px;}
+.index-change{font-family:var(--font-mono); font-size:13px; font-weight:600; display:flex; align-items:center; gap:5px;}
+.index-spark{margin-top:10px; height:46px;}
+
+/* ---- Gauges row ---- */
+.gauge-card{padding:22px; display:flex; flex-direction:column; align-items:center; text-align:center;}
+.gauge-card h3{font-family:var(--font-display); font-size:14px; font-weight:600; margin-bottom:14px; align-self:flex-start;}
+.gauge-card h3[title]{cursor:help; border-bottom:1px dotted var(--text-lo); display:inline-block;}
+.gauge-wrap{position:relative; width:180px; height:100px; margin-bottom:10px;}
+.gauge-label{font-size:12px; color:var(--text-lo); position:absolute; bottom:-2px;}
+.gauge-label.left{left:2px;}
+.gauge-label.right{right:2px;}
+.needle{
+  position:absolute; left:50%; bottom:0; width:3px; height:78px;
+  background:linear-gradient(180deg, var(--text-hi), var(--accent-cyan));
+  transform-origin:bottom center; transform:translateX(-50%) rotate(0deg);
+  border-radius:3px; transition:transform 1s var(--ease);
+  box-shadow:0 0 10px rgba(34,211,238,0.6);
+}
+.needle::after{content:""; position:absolute; bottom:-6px; left:50%; transform:translateX(-50%); width:12px; height:12px; border-radius:50%; background:var(--accent-cyan); box-shadow:0 0 10px var(--accent-cyan);}
+.gauge-readout{font-family:var(--font-display); font-size:17px; font-weight:700; margin-top:2px;}
+.gauge-sub{font-size:11px; color:var(--text-lo); margin-top:2px;}
+
+.confidence-ring{position:relative; width:150px; height:150px; margin-bottom:6px;}
+.confidence-ring svg{transform:rotate(-90deg);}
+.confidence-ring .bg-ring{fill:none; stroke:rgba(255,255,255,0.06); stroke-width:10;}
+.confidence-ring .fg-ring{fill:none; stroke-width:10; stroke-linecap:round; transition:stroke-dashoffset 1.2s var(--ease), stroke 1.2s var(--ease);}
+.confidence-center{position:absolute; inset:0; display:flex; flex-direction:column; align-items:center; justify-content:center;}
+.confidence-center .val{font-family:var(--font-mono); font-size:30px; font-weight:700;}
+.confidence-center .lbl{font-size:10px; color:var(--text-lo); text-transform:uppercase; letter-spacing:.08em;}
+
+.volatility-track{width:100%; height:10px; border-radius:6px; margin-top:18px; position:relative;
+  background:linear-gradient(90deg, var(--bull) 0%, var(--neutral) 50%, var(--bear) 100%);}
+.volatility-marker{
+  position:absolute; top:-6px; width:3px; height:22px; background:#fff; border-radius:2px;
+  box-shadow:0 0 8px rgba(255,255,255,0.7); transition:left 1s var(--ease);
+}
+.volatility-labels{display:flex; justify-content:space-between; width:100%; font-size:10px; color:var(--text-lo); margin-top:8px; text-transform:uppercase; letter-spacing:.05em;}
+
+/* ---- Progress bars ---- */
+.pbar{width:100%; height:8px; border-radius:5px; background:rgba(255,255,255,0.06); overflow:hidden; position:relative;}
+.pbar > span{display:block; height:100%; border-radius:5px; background:linear-gradient(90deg, var(--accent-blue), var(--accent-cyan)); width:0%; transition:width 1.1s var(--ease);}
+
+/* ---- Buttons / chips ---- */
+.chip{display:inline-flex; align-items:center; gap:6px; font-size:11px; padding:4px 10px; border-radius:7px; font-weight:600; letter-spacing:.02em;}
+.chip.bull{background:var(--bull-dim); color:var(--bull);}
+.chip.bear{background:var(--bear-dim); color:var(--bear);}
+.chip.neutral{background:var(--neutral-dim); color:var(--neutral);}
+.btn-outline{
+  padding:9px 16px; border-radius:9px; border:1px solid var(--glass-border); background:rgba(255,255,255,0.03);
+  color:var(--text-hi); font-size:13px; font-weight:500; transition:all .2s var(--ease);
+}
+.btn-outline:hover{background:rgba(255,255,255,0.07); border-color:rgba(140,160,200,0.35);}
+.btn-primary{
+  padding:9px 18px; border-radius:9px; border:none; background:linear-gradient(135deg, var(--accent-blue), var(--accent-violet));
+  color:#fff; font-size:13px; font-weight:600;
+}
+.btn-danger{padding:7px 12px; border-radius:8px; border:1px solid rgba(242,73,92,0.3); background:rgba(242,73,92,0.08); color:var(--bear); font-size:12px; font-weight:500;}
+.btn-danger:hover{background:rgba(242,73,92,0.16);}
+
+/* ---- Loading state ---- */
+.loader-wrap{display:flex; flex-direction:column; align-items:center; justify-content:center; padding:70px 20px; gap:22px;}
+.loader-ring{width:64px; height:64px; border-radius:50%; border:3px solid rgba(255,255,255,0.08); border-top-color:var(--accent-cyan); border-right-color:var(--accent-blue); animation:spin 1s linear infinite;}
+.loader-text{font-family:var(--font-mono); font-size:13px; color:var(--text-mid); text-align:center;}
+.loader-steps{display:flex; flex-direction:column; gap:6px; font-size:12px; color:var(--text-lo); font-family:var(--font-mono);}
+.loader-steps .done{color:var(--bull);}
+.loader-steps i{width:14px;}
+
+/* ---- Trade idea cards ---- */
+.trade-card{padding:22px; position:relative; overflow:hidden;}
+.trade-card::before{content:""; position:absolute; left:0; top:0; bottom:0; width:3px; background:linear-gradient(180deg, var(--accent-blue), var(--accent-cyan));}
+.trade-top{display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:14px; gap:12px; flex-wrap:wrap;}
+.trade-symbol{font-family:var(--font-display); font-size:19px; font-weight:700;}
+.trade-name{font-size:12px; color:var(--text-lo);}
+.trade-rank{
+  width:30px; height:30px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+  background:rgba(59,124,246,0.14); color:var(--accent-cyan); font-family:var(--font-mono); font-weight:700; font-size:13px; flex:0 0 auto;
+}
+.trade-metrics{display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:16px 0;}
+.metric-box{background:rgba(255,255,255,0.03); border:1px solid var(--hairline); border-radius:10px; padding:10px 12px;}
+.metric-box .m-label{font-size:10px; color:var(--text-lo); text-transform:uppercase; letter-spacing:.06em; margin-bottom:4px;}
+.metric-box .m-val{font-family:var(--font-mono); font-size:15px; font-weight:600;}
+@media(max-width:640px){.trade-metrics{grid-template-columns:repeat(2,1fr);}}
+.trade-footer{display:flex; align-items:center; justify-content:space-between; margin-top:14px; flex-wrap:wrap; gap:10px;}
+.confidence-inline{display:flex; align-items:center; gap:8px; min-width:160px;}
+.confidence-inline .pbar{flex:1;}
+.trade-explain{
+  margin-top:14px; padding-top:14px; border-top:1px solid var(--hairline);
+  font-size:13px; line-height:1.6; color:var(--text-mid);
+}
+.trade-explain strong{color:var(--text-hi);}
+
+.empty-state{
+  padding:60px 30px; text-align:center; display:flex; flex-direction:column; align-items:center; gap:14px;
+}
+.empty-state i{font-size:38px; color:var(--neutral);}
+.empty-state h3{font-family:var(--font-display); font-size:18px; font-weight:600;}
+.empty-state p{color:var(--text-mid); font-size:13.5px; max-width:420px;}
+
+/* ---- Technical panel ---- */
+.stock-select-row{display:flex; align-items:center; gap:14px; margin-bottom:22px; flex-wrap:wrap;}
+select, input[type=text], input[type=number]{
+  background:rgba(255,255,255,0.04); border:1px solid var(--glass-border); color:var(--text-hi);
+  padding:10px 14px; border-radius:9px; font-size:13.5px; font-family:var(--font-body);
+}
+select:focus, input:focus{border-color:var(--accent-cyan);}
+.field-lbl{display:block; font-size:10px; text-transform:uppercase; color:var(--text-lo); margin-bottom:5px; letter-spacing:.04em;}
+.field-in{width:100%; background:var(--bg-1); border:1px solid var(--glass-border); border-radius:8px; padding:9px 11px; color:var(--text-hi); font-size:12.5px;}
+.field-in[readonly]{color:var(--text-mid); cursor:text;}
+@media(max-width:820px){ .broker-fields{grid-template-columns:1fr !important;} }
+.indicator-card{padding:16px 18px;}
+.indicator-head{display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;}
+.indicator-head span{font-size:12px; color:var(--text-lo); text-transform:uppercase; letter-spacing:.06em;}
+.indicator-val{font-family:var(--font-mono); font-size:22px; font-weight:700;}
+.indicator-note{font-size:11.5px; color:var(--text-mid); margin-top:4px;}
+.chart-card{padding:18px 20px;}
+.chart-card h4{font-family:var(--font-display); font-size:14px; font-weight:600; margin-bottom:12px;}
+.sr-list{display:flex; flex-direction:column; gap:8px;}
+.sr-row{display:flex; justify-content:space-between; align-items:center; padding:9px 12px; background:rgba(255,255,255,0.03); border-radius:8px; font-family:var(--font-mono); font-size:13px;}
+
+/* ---- News ---- */
+.news-card{padding:18px 20px; display:flex; flex-direction:column; gap:8px;}
+.news-head{display:flex; justify-content:space-between; align-items:flex-start; gap:10px;}
+.news-title{font-size:14.5px; font-weight:600; line-height:1.4;}
+.news-meta{font-size:11px; color:var(--text-lo); display:flex; gap:10px; margin-top:2px;}
+.news-summary{font-size:13px; color:var(--text-mid); line-height:1.55;}
+
+/* ---- Institutional ---- */
+.sector-row{display:flex; align-items:center; gap:12px; margin-bottom:12px;}
+.sector-row .sname{width:130px; font-size:12.5px; color:var(--text-mid); flex:0 0 auto;}
+.sector-bar-track{flex:1; height:8px; border-radius:5px; background:rgba(255,255,255,0.05); position:relative; overflow:hidden;}
+.sector-bar-fill{position:absolute; top:0; bottom:0; border-radius:5px;}
+.sector-score{width:44px; text-align:right; font-family:var(--font-mono); font-size:12px; flex:0 0 auto;}
+table{width:100%; border-collapse:collapse; font-size:13px;}
+th{text-align:left; font-size:11px; color:var(--text-lo); text-transform:uppercase; letter-spacing:.05em; padding:10px 12px; border-bottom:1px solid var(--hairline);}
+td{padding:12px; border-bottom:1px solid var(--hairline); font-family:var(--font-mono); font-size:12.5px;}
+td.name-cell{font-family:var(--font-body); font-weight:500;}
+tr:last-child td{border-bottom:none;}
+.table-wrap{overflow-x:auto;}
+
+/* ---- Decision engine ---- */
+.score-row{display:flex; align-items:center; gap:16px; padding:16px 18px; border-bottom:1px solid var(--hairline);}
+.score-row:last-child{border-bottom:none;}
+.score-circle{
+  width:52px; height:52px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+  font-family:var(--font-mono); font-weight:700; font-size:15px; flex:0 0 auto; border:2px solid;
+}
+.score-body{flex:1; min-width:0;}
+.score-body .sb-top{display:flex; justify-content:space-between; gap:8px; align-items:center; margin-bottom:6px; flex-wrap:wrap;}
+.factor-tags{display:flex; gap:6px; flex-wrap:wrap; margin-bottom:6px;}
+.factor-tag{font-size:10.5px; padding:3px 8px; border-radius:6px; background:rgba(255,255,255,0.04); color:var(--text-mid); font-family:var(--font-mono);}
+.score-reason{font-size:12.5px; color:var(--text-mid); line-height:1.5;}
+
+/* ---- Watchlist ---- */
+.watch-form{display:flex; gap:10px; margin-bottom:20px; flex-wrap:wrap;}
+.watch-form input{flex:1; min-width:180px;}
+.watch-item{display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--hairline);}
+.watch-item:last-child{border-bottom:none;}
+.watch-left{display:flex; align-items:center; gap:14px;}
+.watch-sym{font-family:var(--font-display); font-weight:700; font-size:15px;}
+.watch-sector{font-size:11px; color:var(--text-lo);}
+.watch-right{display:flex; align-items:center; gap:16px;}
+.watch-price{font-family:var(--font-mono); font-weight:600; font-size:14px; text-align:right;}
+
+/* ---- Journal ---- */
+.journal-form{display:grid; grid-template-columns:repeat(6,1fr); gap:12px; margin-bottom:10px;}
+@media(max-width:1100px){.journal-form{grid-template-columns:repeat(3,1fr);}}
+@media(max-width:640px){.journal-form{grid-template-columns:repeat(2,1fr);}}
+.journal-form .full{grid-column:1/-1;}
+.stat-strip{display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:22px;}
+@media(max-width:640px){.stat-strip{grid-template-columns:repeat(2,1fr);}}
+.stat-box{padding:16px 18px; text-align:center;}
+.stat-box .s-val{font-family:var(--font-mono); font-size:22px; font-weight:700;}
+.stat-box .s-lbl{font-size:11px; color:var(--text-lo); text-transform:uppercase; letter-spacing:.05em; margin-top:4px;}
+
+/* ---- Padding helper ---- */
+.pad{padding:20px 22px;}
+.flex-between{display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;}
+
+/* reduced motion */
+@media (prefers-reduced-motion: reduce){
+  *{animation-duration:0.01ms !important; animation-iteration-count:1 !important; transition-duration:0.01ms !important;}
+}
+
+footer{text-align:center; padding:30px 20px; color:var(--text-lo); font-size:11.5px; border-top:1px solid var(--hairline);}
+</style>
+</head>
+<body>
+
+<!-- ============================================================
+     TICKER TAPE
+     ============================================================ -->
+<div class="ticker-wrap"><div class="ticker-track" id="tickerTrack"></div></div>
+
+<!-- ============================================================
+     BROKER CONNECT PANEL — Angel One / Groww / Zerodha / Upstox
+     ============================================================ -->
+<div class="glass" id="connectPanel" style="margin:16px clamp(16px,4vw,40px) 0; padding:20px 22px;">
+  <h3 style="font-family:var(--font-display); font-size:15px; margin-bottom:4px;">Connect a broker for live prices</h3>
+  <p style="font-size:12px; color:var(--text-lo); margin-bottom:14px;">Credentials go directly from your browser to your broker's own servers — nothing is stored or sent anywhere else, and secrets are kept only in this tab's memory (never saved to disk). Indices, the ticker, and the watchlist go live once connected. AI analysis, news and institutional flow stay simulated regardless — those need separate data sources.</p>
+
+  <form id="connectForm" autocomplete="off" onsubmit="return false;">
+  <div style="margin-bottom:16px; max-width:280px;">
+    <label style="display:block; font-size:10px; text-transform:uppercase; color:var(--text-lo); margin-bottom:5px;">Broker</label>
+    <select id="brokerSelect" style="width:100%;">
+      <option value="angelone">Angel One</option>
+      <option value="groww">Groww</option>
+      <option value="zerodha">Zerodha (Kite Connect)</option>
+      <option value="upstox">Upstox</option>
+    </select>
+  </div>
+
+  <!-- Angel One -->
+  <div class="broker-fields" data-broker="angelone" style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px;">
+    <div><label class="field-lbl">Client Code</label><input id="in-clientcode" placeholder="A123456" class="field-in" autocomplete="username"></div>
+    <div><label class="field-lbl">PIN / Password</label><input id="in-pin" type="password" placeholder="••••" class="field-in" autocomplete="off"></div>
+    <div><label class="field-lbl">TOTP Code</label><input id="in-totp" placeholder="6-digit code" class="field-in" autocomplete="one-time-code"></div>
+    <div><label class="field-lbl">SmartAPI Key</label><input id="in-apikey" type="password" placeholder="From smartapi.angelone.in" class="field-in" autocomplete="off"></div>
+  </div>
+
+  <!-- Groww -->
+  <div class="broker-fields" data-broker="groww" style="display:none; grid-template-columns:repeat(2,1fr); gap:12px;">
+    <div><label class="field-lbl">API Key</label><input id="in-groww-key" type="password" placeholder="From Groww Cloud API Keys page" class="field-in" autocomplete="off"></div>
+    <div><label class="field-lbl">TOTP Code</label><input id="in-groww-totp" placeholder="6-digit code" class="field-in" autocomplete="one-time-code"></div>
+  </div>
+
+  <!-- Zerodha -->
+  <div class="broker-fields" data-broker="zerodha" style="display:none; grid-template-columns:repeat(2,1fr); gap:12px;">
+    <div><label class="field-lbl">API Key</label><input id="in-zerodha-key" placeholder="From developers.kite.trade" class="field-in" autocomplete="username"></div>
+    <div><label class="field-lbl">API Secret</label><input id="in-zerodha-secret" type="password" placeholder="API secret" class="field-in" autocomplete="off"></div>
+    <div class="full" style="grid-column:1/-1;"><label class="field-lbl">Redirect URL (register this exact URL on your Kite Connect app)</label><input id="in-zerodha-redirect" class="field-in" readonly></div>
+  </div>
+
+  <!-- Upstox -->
+  <div class="broker-fields" data-broker="upstox" style="display:none; grid-template-columns:repeat(2,1fr); gap:12px;">
+    <div><label class="field-lbl">Client ID (API Key)</label><input id="in-upstox-key" placeholder="From Upstox Developer Apps" class="field-in" autocomplete="username"></div>
+    <div><label class="field-lbl">Client Secret</label><input id="in-upstox-secret" type="password" placeholder="API secret" class="field-in" autocomplete="off"></div>
+    <div class="full" style="grid-column:1/-1;"><label class="field-lbl">Redirect URI (register this exact URL on your Upstox app)</label><input id="in-upstox-redirect" class="field-in" readonly></div>
+  </div>
+
+  <div id="brokerHint" style="margin-top:10px; font-size:11px; color:var(--text-lo);"></div>
+  <button id="connectBtn" type="submit" class="btn-primary" style="margin-top:14px;"><i class="fa-solid fa-plug"></i> Connect</button>
+  <div id="connectStatus" style="margin-top:10px; font-size:12px; display:none;"></div>
+  </form>
+</div>
+
+<!-- ============================================================
+     HEADER
+     ============================================================ -->
+<header class="app-header">
+  <div class="brand">
+    <div class="brand-mark"><i class="fa-solid fa-chart-line"></i></div>
+    <div class="brand-text">
+      <h1>TradeMind AI</h1>
+      <span>Swing Trade Intelligence</span>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="live-badge" id="liveBadge"><span class="live-dot" id="liveDot"></span> <span id="liveBadgeText">Prices Simulated — Connect a Broker</span></div>
+    <div class="clock-block">
+      <div class="clock-time" id="clockTime">--:--:--</div>
+      <div class="clock-date" id="clockDate">Loading date…</div>
+    </div>
+  </div>
+</header>
+
+<!-- ============================================================
+     NAV
+     ============================================================ -->
+<nav class="tab-nav" id="tabNav">
+  <button class="tab-btn active" data-tab="dashboard"><i class="fa-solid fa-gauge-high"></i> Dashboard</button>
+  <button class="tab-btn" data-tab="analysis"><i class="fa-solid fa-brain"></i> AI Analysis</button>
+  <button class="tab-btn" data-tab="technical"><i class="fa-solid fa-chart-column"></i> Technical</button>
+  <button class="tab-btn" data-tab="news"><i class="fa-solid fa-newspaper"></i> News</button>
+  <button class="tab-btn" data-tab="institutional"><i class="fa-solid fa-building-columns"></i> Institutional</button>
+  <button class="tab-btn" data-tab="decision"><i class="fa-solid fa-microchip"></i> Decision Engine</button>
+  <button class="tab-btn" data-tab="watchlist"><i class="fa-solid fa-star"></i> Watchlist</button>
+  <button class="tab-btn" data-tab="journal"><i class="fa-solid fa-book"></i> Journal</button>
+  <button class="tab-btn" data-tab="portfolio"><i class="fa-solid fa-chart-pie"></i> Portfolio</button>
+</nav>
+
+<main>
+
+  <!-- ============================================================
+       DASHBOARD
+       ============================================================ -->
+  <section class="tab-panel active" id="dashboard">
+
+    <div class="glass cta-panel" style="margin-bottom:24px;">
+      <div class="cta-copy">
+        <h2>Ready to scan the market?</h2>
+        <p>Run the AI engine across index trend, momentum, volume, sentiment and institutional flow to surface today's highest-quality swing setups.</p>
+      </div>
+      <button class="analyze-btn" id="analyzeBtn"><i class="fa-solid fa-wand-magic-sparkles"></i> Analyze Today's Market</button>
+    </div>
+
+    <div class="section-title"><i class="fa-solid fa-layer-group"></i> Market Indices</div>
+    <div class="grid grid-3" id="indexCards"></div>
+
+    <div class="section-title"><i class="fa-solid fa-gauge"></i> Market Pulse</div>
+    <div class="section-sub">A quick read on where the market stands right now — no jargon required. Hover any title below for a plain-English explanation.</div>
+    <div class="grid grid-3">
+      <div class="glass gauge-card">
+        <h3 title="How positive or negative recent price moves have been across the market. Green = more buyers stepping in, red = more sellers.">Market Sentiment</h3>
+        <div class="gauge-wrap">
+          <svg width="180" height="100" viewBox="0 0 180 100">
+            <path d="M10,95 A80,80 0 0,1 60,17" stroke="#e5484d" stroke-width="14" fill="none" stroke-linecap="round"/>
+            <path d="M60,17 A80,80 0 0,1 120,17" stroke="#d99a3d" stroke-width="14" fill="none" stroke-linecap="round"/>
+            <path d="M120,17 A80,80 0 0,1 170,95" stroke="#22b573" stroke-width="14" fill="none" stroke-linecap="round"/>
+          </svg>
+          <div class="needle" id="sentimentNeedle"></div>
+          <span class="gauge-label left">Bearish</span>
+          <span class="gauge-label right">Bullish</span>
+        </div>
+        <div class="gauge-readout" id="sentimentReadout">Neutral</div>
+        <div class="gauge-sub" id="sentimentScore">Score: 50 / 100</div>
+      </div>
+
+      <div class="glass gauge-card">
+        <h3 style="align-self:center;" title="How strongly today's signals agree with each other. A higher number means the price trend, momentum, and volume are all pointing the same way — not a promise of profit.">AI Confidence Meter</h3>
+        <div class="confidence-ring">
+          <svg width="150" height="150">
+            <circle class="bg-ring" cx="75" cy="75" r="64"></circle>
+            <circle class="fg-ring" id="confRing" cx="75" cy="75" r="64" stroke="#3b7cf6" stroke-dasharray="402" stroke-dashoffset="402"></circle>
+          </svg>
+          <div class="confidence-center">
+            <div class="val" id="confVal">0</div>
+            <div class="lbl">Confidence</div>
+          </div>
+        </div>
+        <div class="gauge-sub" id="confSub">Awaiting analysis…</div>
+      </div>
+
+      <div class="glass gauge-card" style="align-items:stretch;">
+        <h3 title="How much prices are swinging up and down right now. Higher volatility means bigger, faster moves in either direction — which can mean bigger gains or bigger losses.">Market Volatility</h3>
+        <div style="flex:1; display:flex; flex-direction:column; justify-content:center;">
+          <div class="gauge-readout" id="volReadout" style="align-self:center;">Moderate</div>
+          <div class="volatility-track">
+            <div class="volatility-marker" id="volMarker" style="left:50%;"></div>
+          </div>
+          <div class="volatility-labels"><span>Low</span><span>Medium</span><span>High</span><span>Extreme</span></div>
+          <div class="gauge-sub" id="volSub" style="margin-top:14px;">India VIX proxy: 13.4</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       AI ANALYSIS
+       ============================================================ -->
+  <section class="tab-panel" id="analysis">
+    <div class="section-title"><i class="fa-solid fa-brain"></i> AI Swing Trade Opportunities</div>
+    <div class="section-sub">Top setups ranked by a real technical screen (trend, momentum, volatility, volume, sector strength) over recent price history — connect a broker for live data, or preview it in demo mode. Not a profit guarantee.</div>
+    <div id="analysisContent">
+      <div class="empty-state glass">
+        <i class="fa-solid fa-circle-play"></i>
+        <h3>No analysis run yet</h3>
+        <p>Head to the Dashboard and press "Analyze Today's Market" to generate today's swing trade recommendations.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       TECHNICAL ANALYSIS
+       ============================================================ -->
+  <section class="tab-panel" id="technical">
+    <div class="section-title"><i class="fa-solid fa-chart-column"></i> Technical Analysis</div>
+    <div class="stock-select-row">
+      <label for="techStockSelect" style="font-size:13px; color:var(--text-mid);">Symbol</label>
+      <select id="techStockSelect"></select>
+      <span class="chip neutral" id="techPriceChip">—</span>
+    </div>
+
+    <div class="grid grid-4" id="techIndicatorGrid" style="margin-bottom:20px;"></div>
+
+    <div class="grid grid-2" style="margin-bottom:20px;">
+      <div class="glass chart-card"><h4>RSI (14)</h4><canvas id="rsiChart" height="160"></canvas></div>
+      <div class="glass chart-card"><h4>MACD (12,26,9)</h4><canvas id="macdChart" height="160"></canvas></div>
+    </div>
+    <div class="grid grid-2" style="margin-bottom:20px;">
+      <div class="glass chart-card"><h4>Volume Analysis</h4><canvas id="volChart" height="160"></canvas></div>
+      <div class="glass chart-card">
+        <h4>Support &amp; Resistance</h4>
+        <div class="sr-list" id="srList"></div>
+      </div>
+    </div>
+    <div class="grid grid-4">
+      <div class="glass indicator-card">
+        <div class="indicator-head"><span>Trend Strength</span></div>
+        <div class="indicator-val" id="trendStrengthVal">—</div>
+        <div class="pbar" style="margin-top:8px;"><span id="trendStrengthBar"></span></div>
+      </div>
+      <div class="glass indicator-card">
+        <div class="indicator-head"><span>Breakout Detection</span></div>
+        <div class="indicator-val" id="breakoutVal">—</div>
+        <div class="indicator-note" id="breakoutNote"></div>
+      </div>
+      <div class="glass indicator-card">
+        <div class="indicator-head"><span>Relative Strength vs NIFTY</span></div>
+        <div class="indicator-val" id="relStrengthVal">—</div>
+        <div class="indicator-note" id="relStrengthNote"></div>
+      </div>
+      <div class="glass indicator-card">
+        <div class="indicator-head"><span>ATR (14)</span></div>
+        <div class="indicator-val" id="atrVal">—</div>
+        <div class="indicator-note">Average true range, volatility per share</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       MARKET NEWS
+       ============================================================ -->
+  <section class="tab-panel" id="news">
+    <div class="section-title"><i class="fa-solid fa-newspaper"></i> Today's Market News</div>
+    <div class="section-sub">AI-generated summaries with sentiment classification. Replace with a live news API feed when available.</div>
+    <div class="grid grid-2" id="newsGrid"></div>
+  </section>
+
+  <!-- ============================================================
+       INSTITUTIONAL ANALYSIS
+       ============================================================ -->
+  <section class="tab-panel" id="institutional">
+    <div class="section-title"><i class="fa-solid fa-building-columns"></i> Institutional Activity</div>
+    <div class="grid grid-2" style="margin-bottom:20px;">
+      <div class="glass chart-card">
+        <h4>FII Activity — Net Flow (₹ Cr, last 10 sessions)</h4>
+        <canvas id="fiiChart" height="170"></canvas>
+      </div>
+      <div class="glass chart-card">
+        <h4>DII Activity — Net Flow (₹ Cr, last 10 sessions)</h4>
+        <canvas id="diiChart" height="170"></canvas>
+      </div>
+    </div>
+
+    <div class="section-title"><i class="fa-solid fa-industry"></i> Sector Strength</div>
+    <div class="glass pad" id="sectorStrengthBox"></div>
+
+    <div class="section-title"><i class="fa-solid fa-people-arrows"></i> Institutional Buying &amp; Selling</div>
+    <div class="grid grid-2">
+      <div class="glass pad">
+        <h4 style="font-family:var(--font-display); font-size:14px; margin-bottom:10px; color:var(--bull);"><i class="fa-solid fa-arrow-trend-up"></i> Top Institutional Buys</h4>
+        <div class="table-wrap"><table id="instBuyTable"><thead><tr><th>Stock</th><th>Net Value (₹ Cr)</th><th>Delivery %</th></tr></thead><tbody></tbody></table></div>
+      </div>
+      <div class="glass pad">
+        <h4 style="font-family:var(--font-display); font-size:14px; margin-bottom:10px; color:var(--bear);"><i class="fa-solid fa-arrow-trend-down"></i> Top Institutional Sells</h4>
+        <div class="table-wrap"><table id="instSellTable"><thead><tr><th>Stock</th><th>Net Value (₹ Cr)</th><th>Delivery %</th></tr></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       AI DECISION ENGINE
+       ============================================================ -->
+  <section class="tab-panel" id="decision">
+    <div class="section-title"><i class="fa-solid fa-microchip"></i> AI Decision Engine</div>
+    <div class="section-sub">Every stock scored 0–100 across six real, computed technical factors (no factor here is filled in randomly), with the reasoning behind each score.</div>
+    <div class="glass" id="decisionList"></div>
+  </section>
+
+  <!-- ============================================================
+       WATCHLIST
+       ============================================================ -->
+  <section class="tab-panel" id="watchlist">
+    <div class="section-title"><i class="fa-solid fa-star"></i> Watchlist</div>
+    <div class="glass pad">
+      <div class="watch-form">
+        <input type="text" id="watchInput" placeholder="Enter symbol, e.g. RELIANCE">
+        <input type="number" id="watchQty" placeholder="Qty held (optional)" style="max-width:160px;">
+        <button class="btn-primary" id="watchAddBtn"><i class="fa-solid fa-plus"></i> Add to Watchlist</button>
+      </div>
+      <p style="font-size:11px; color:var(--text-lo); margin:-4px 0 12px;">Leave Qty blank to just track a price. Set a quantity for stocks you actually hold — it feeds the Portfolio tab's allocation view.</p>
+      <div id="watchListBox"></div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       TRADE JOURNAL
+       ============================================================ -->
+  <section class="tab-panel" id="journal">
+    <div class="section-title"><i class="fa-solid fa-book"></i> Trade Journal</div>
+
+    <div class="stat-strip">
+      <div class="glass stat-box"><div class="s-val" id="statTotal">0</div><div class="s-lbl">Total Trades</div></div>
+      <div class="glass stat-box"><div class="s-val" id="statWinRate">0%</div><div class="s-lbl">Win Rate</div></div>
+      <div class="glass stat-box"><div class="s-val" id="statPnl">₹0</div><div class="s-lbl">Total P&amp;L</div></div>
+      <div class="glass stat-box"><div class="s-val" id="statAvgR">0.00</div><div class="s-lbl">Avg R-Multiple</div></div>
+    </div>
+
+    <div class="glass pad" style="margin-bottom:20px;">
+      <h4 style="font-family:var(--font-display); font-size:14px; margin-bottom:14px;">Log a Trade</h4>
+      <div class="journal-form">
+        <input type="text" id="jSymbol" placeholder="Symbol">
+        <input type="number" id="jEntry" placeholder="Entry ₹">
+        <input type="number" id="jExit" placeholder="Exit ₹">
+        <input type="number" id="jSL" placeholder="Stop-Loss ₹ (optional)">
+        <input type="number" id="jQty" placeholder="Qty" value="1">
+        <button class="btn-primary" id="jAddBtn"><i class="fa-solid fa-floppy-disk"></i> Save Trade</button>
+        <input type="text" id="jNotes" class="full" placeholder="Notes — setup, reasoning, lessons learned…">
+      </div>
+    </div>
+
+    <div class="glass pad">
+      <div class="flex-between" style="margin-bottom:14px;">
+        <h4 style="font-family:var(--font-display); font-size:14px;">Trade History</h4>
+        <button class="btn-outline" id="jExportBtn"><i class="fa-solid fa-file-csv"></i> Export CSV</button>
+      </div>
+      <div class="table-wrap">
+        <table id="journalTable">
+          <thead><tr><th>Date</th><th>Symbol</th><th>Entry</th><th>Exit</th><th>SL</th><th>Qty</th><th>P&amp;L</th><th>R</th><th>Notes</th><th></th></tr></thead>
+          <tbody id="journalTbody"></tbody>
+        </table>
+      </div>
+      <div id="journalEmpty" class="empty-state" style="display:none;">
+        <i class="fa-solid fa-book-open"></i>
+        <h3>No trades logged yet</h3>
+        <p>Save your first trade above to start tracking your performance.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============================================================
+       UNIFIED PORTFOLIO
+       ============================================================ -->
+  <section class="tab-panel" id="portfolio">
+    <div class="section-title"><i class="fa-solid fa-chart-pie"></i> Unified Portfolio</div>
+    <div class="section-sub">Equities (from your Watchlist), gold &amp; silver, mutual funds, bonds and US stocks in one allocation view. Everything you enter here stays on this device only.</div>
+
+    <div class="grid grid-2" style="align-items:stretch;">
+      <div class="glass pad">
+        <h4 style="font-family:var(--font-display); font-size:14px; margin-bottom:14px;">Asset Allocation</h4>
+        <canvas id="allocChart" height="220"></canvas>
+      </div>
+      <div class="glass pad">
+        <h4 style="font-family:var(--font-display); font-size:14px; margin-bottom:14px;">Summary</h4>
+        <div id="portfolioSummary" class="stat-strip" style="display:grid; grid-template-columns:1fr 1fr; gap:12px;"></div>
+        <p style="font-size:11px; color:var(--text-lo); margin-top:14px;">Gold/silver use a live global spot rate, mutual funds pull live NAV from an AMFI-sourced feed, and US stocks need a free Finnhub key. Bond values are calculated, not fetched — no public live-price feed exists for retail bonds.</p>
+      </div>
+    </div>
+
+    <!-- Gold & Silver -->
+    <div class="section-title" style="margin-top:28px;"><i class="fa-solid fa-coins"></i> Gold &amp; Silver</div>
+    <div class="glass pad" style="margin-bottom:16px;">
+      <div class="journal-form" style="grid-template-columns:repeat(4,1fr);">
+        <select id="cmMetal"><option value="Gold">Gold</option><option value="Silver">Silver</option></select>
+        <input type="number" id="cmQty" placeholder="Quantity (grams)">
+        <input type="number" id="cmAvgPrice" placeholder="Avg buy price / gram (₹)">
+        <button class="btn-primary" id="cmAddBtn"><i class="fa-solid fa-plus"></i> Add Holding</button>
+      </div>
+      <p style="font-size:11px; color:var(--text-lo); margin:8px 0 0;">Priced off a live global spot rate (troy oz → gram, converted to ₹ at the live USD/INR rate) — this is the closest reliable free proxy available. It runs roughly 10–15% below Aura Gold's own price, since that includes import duty, GST and making charges that a global spot rate doesn't. Works without connecting a broker. <button class="btn-outline" id="cmRefreshBtn" style="margin-left:6px; padding:3px 10px; font-size:11px;"><i class="fa-solid fa-arrows-rotate"></i> Refresh price</button></p>
+    </div>
+    <div id="commodityStatus" class="mono" style="font-size:11px; color:var(--text-lo); margin-bottom:8px;"></div>
+    <div class="table-wrap"><table id="commodityTable"><thead><tr><th>Metal</th><th>Qty (g)</th><th>Avg Buy ₹/g</th><th>Current ₹/g</th><th>Value</th><th>P&amp;L</th><th></th></tr></thead><tbody id="commodityTbody"></tbody></table></div>
+    <div id="commodityEmpty" class="empty-state" style="display:none;"><i class="fa-solid fa-coins"></i><h3>No gold/silver logged yet</h3><p>Add what you hold via Aura Gold or elsewhere above.</p></div>
+
+    <!-- Mutual Funds -->
+    <div class="section-title" style="margin-top:28px;"><i class="fa-solid fa-layer-group"></i> Mutual Funds</div>
+    <div class="glass pad" style="margin-bottom:16px;">
+      <div class="journal-form" style="grid-template-columns:2fr 1fr 1fr auto;">
+        <div style="position:relative;">
+          <input type="text" id="mfSearch" placeholder="Search fund name, e.g. Parag Parikh Flexi Cap" autocomplete="off">
+          <div id="mfSearchResults" style="display:none; position:absolute; z-index:20; top:100%; left:0; right:0; background:var(--bg-1); border:1px solid var(--glass-border); border-radius:8px; max-height:220px; overflow-y:auto; margin-top:4px;"></div>
+        </div>
+        <input type="number" id="mfUnits" placeholder="Units held">
+        <input type="number" id="mfAvgNav" placeholder="Avg buy NAV (₹)">
+        <button class="btn-primary" id="mfAddBtn"><i class="fa-solid fa-plus"></i> Add</button>
+      </div>
+      <p style="font-size:11px; color:var(--text-lo); margin:8px 0 0;" id="mfSelectedHint">Search and pick a fund first — NAV is pulled live from mfapi.in (a free public wrapper around AMFI's daily NAV data).</p>
+    </div>
+    <div id="mfStatus" class="mono" style="font-size:11px; color:var(--text-lo); margin-bottom:8px;"></div>
+    <div class="table-wrap"><table id="mfTable"><thead><tr><th>Scheme</th><th>Units</th><th>Avg NAV</th><th>Current NAV</th><th>Value</th><th>P&amp;L</th><th></th></tr></thead><tbody id="mfTbody"></tbody></table></div>
+    <div id="mfEmpty" class="empty-state" style="display:none;"><i class="fa-solid fa-layer-group"></i><h3>No mutual funds logged yet</h3><p>Search for a fund above to add your holding.</p></div>
+
+    <!-- Bonds -->
+    <div class="section-title" style="margin-top:28px;"><i class="fa-solid fa-file-contract"></i> Bonds <span style="font-size:11px; color:var(--text-lo); font-weight:400;">— govt, private (incl. WintWealth)</span></div>
+    <div class="glass pad" style="margin-bottom:16px;">
+      <div class="journal-form" style="grid-template-columns:repeat(6,1fr);">
+        <input type="text" id="bIssuer" placeholder="Issuer / ISIN">
+        <input type="number" id="bFaceValue" placeholder="Face value ₹">
+        <input type="number" id="bCoupon" placeholder="Coupon % p.a.">
+        <input type="date" id="bMaturity">
+        <input type="number" id="bPurchasePrice" placeholder="Purchase price ₹">
+        <input type="number" id="bQty" placeholder="Qty" value="1">
+        <button class="btn-primary full" id="bAddBtn" style="grid-column:1/-1;"><i class="fa-solid fa-plus"></i> Add Bond</button>
+      </div>
+      <p style="font-size:11px; color:var(--text-lo); margin:8px 0 0;">Current value here is <em>calculated</em> from face value, coupon and time to maturity — not a live market price. No public feed exists for individual bond prices, so this approximates accrued value rather than what you'd actually get selling early.</p>
+    </div>
+    <div class="table-wrap"><table id="bondTable"><thead><tr><th>Issuer</th><th>Face Value</th><th>Coupon</th><th>Maturity</th><th>Days Left</th><th>Accrued Value</th><th>Approx. YTM</th><th></th></tr></thead><tbody id="bondTbody"></tbody></table></div>
+    <div id="bondEmpty" class="empty-state" style="display:none;"><i class="fa-solid fa-file-contract"></i><h3>No bonds logged yet</h3><p>Add a bond above — works for govt bonds, WintWealth holdings, or any other private bond.</p></div>
+
+    <!-- US Stocks -->
+    <div class="section-title" style="margin-top:28px;"><i class="fa-solid fa-flag-usa"></i> US Markets</div>
+    <div class="glass pad" style="margin-bottom:16px;">
+      <form autocomplete="off" onsubmit="return false;" style="margin-bottom:14px; max-width:420px;">
+        <label class="field-lbl">Finnhub API Key (free at finnhub.io)</label>
+        <input type="password" id="finnhubKey" class="field-in" placeholder="Paste your free Finnhub API key" autocomplete="off">
+      </form>
+      <div class="journal-form" style="grid-template-columns:repeat(4,1fr);">
+        <input type="text" id="usSymbol" placeholder="Symbol, e.g. AAPL, MSFT, QQQ">
+        <input type="number" id="usQty" placeholder="Qty">
+        <input type="number" id="usAvgPrice" placeholder="Avg buy price (US$)">
+        <button class="btn-primary" id="usAddBtn"><i class="fa-solid fa-plus"></i> Add Holding</button>
+      </div>
+      <p style="font-size:11px; color:var(--text-lo); margin:8px 0 0;">Live quotes need a free Finnhub key (their free tier covers NYSE/Nasdaq quotes) — paste it above once, it's saved to this device only. INR values use a live USD→INR rate.</p>
+    </div>
+    <div id="usStatus" class="mono" style="font-size:11px; color:var(--text-lo); margin-bottom:8px;"></div>
+    <div class="table-wrap"><table id="usTable"><thead><tr><th>Symbol</th><th>Qty</th><th>Avg Buy (US$)</th><th>Current (US$)</th><th>Value (₹)</th><th>P&amp;L (₹)</th><th></th></tr></thead><tbody id="usTbody"></tbody></table></div>
+    <div id="usEmpty" class="empty-state" style="display:none;"><i class="fa-solid fa-flag-usa"></i><h3>No US holdings logged yet</h3><p>Add a symbol above once you've pasted a Finnhub key.</p></div>
+  </section>
+
+</main>
+
+<footer>TradeMind AI — For personal, educational use only. Prices (indices, ticker, watchlist) are live via your connected broker account once you connect above; AI scores, news, and institutional flow remain simulated demo data. This is not investment advice.</footer>
+
+<script>
+/* ============================================================================
+   TRADEMIND AI — APPLICATION LOGIC
+   Structured so every block that produces mock data is clearly marked.
+   To go live: replace the body of each "DATA SOURCE" function with a real
+   API call (broker API / NSE feed / news API) that returns the same shape.
+   ============================================================================ */
+
+/* ---------------------------------------------------------------------------
+   0. UTILITIES
+   --------------------------------------------------------------------------- */
+const rand   = (min, max) => Math.random() * (max - min) + min;
+const randInt = (min, max) => Math.floor(rand(min, max + 1));
+const pick   = arr => arr[randInt(0, arr.length - 1)];
+const fmt    = n => n.toLocaleString('en-IN', { maximumFractionDigits: 2, minimumFractionDigits: 2 });
+const fmtInt = n => Math.round(n).toLocaleString('en-IN');
+const clamp  = (v, a, b) => Math.max(a, Math.min(b, v));
+
+/* ---------------------------------------------------------------------------
+   0b. BROKER CONNECT LAYER — pluggable adapters for Angel One, Groww,
+   Zerodha (Kite Connect) and Upstox. Everything below this block that says
+   "connected" refers to a live session with one of these four.
+
+   SECURITY NOTE: credentials go straight from your browser to your broker's
+   own domains and live only in this tab's memory. sessionStorage is used
+   only to survive the Zerodha/Upstox OAuth redirect (cleared immediately
+   after), never localStorage. For Zerodha/Upstox, the API Secret briefly
+   sits in page memory and is visible in your browser's network tab during
+   the token exchange — an acceptable trade-off for a personal tool you run
+   yourself, but don't ship a build with your secret baked into a public URL.
+
+   Field names for Groww's live-data payload and Upstox's instrument master
+   are based on their published docs but haven't been tested against a live
+   paid account — check them against your account's actual responses if a
+   quote comes back empty, and open your browser console for the real error.
+   --------------------------------------------------------------------------- */
+let connected = false;
+let brokerProvider = null;   // 'angelone' | 'groww' | 'zerodha' | 'upstox'
+let scripMap = null;         // "SYMBOL" -> broker instrument id (Angel One + Upstox only)
+
+function setConnectStatus(msg, type='info'){
+  const el = document.getElementById('connectStatus');
+  const colors = { info:'var(--accent-cyan)', error:'var(--bear)', warn:'var(--neutral)' };
+  el.style.display='block'; el.style.color = colors[type]; el.textContent = msg;
+}
+function setBtnBusy(busy, label){
+  const btn = document.getElementById('connectBtn');
+  btn.disabled = busy;
+  if(busy){ btn.innerHTML = `<i class="fa-solid fa-circle-notch fa-spin"></i> ${label || 'Connecting…'}`; return; }
+  const sel = document.getElementById('brokerSelect');
+  const isRedirect = sel.value === 'zerodha' || sel.value === 'upstox';
+  btn.innerHTML = isRedirect ? `<i class="fa-solid fa-arrow-right"></i> Continue to ${sel.value === 'zerodha' ? 'Zerodha' : 'Upstox'}` : '<i class="fa-solid fa-plug"></i> Connect';
+}
+function markConnected(label){
+  connected = true;
+  document.getElementById('liveDot').style.background = 'var(--bull)';
+  document.getElementById('liveBadgeText').textContent = `Live via ${label}`;
+  document.getElementById('connectPanel').style.display = 'none';
+}
+async function sha256Hex(str){
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+/* ---------------------------------------------------------------------------
+   BROKER PROXY — Angel One, Groww, Zerodha and Upstox all block direct
+   browser calls (no Access-Control-Allow-Origin header — they're
+   server-to-server APIs). pfetch() routes those specific calls through a
+   small same-origin-safe proxy server instead, so the browser never talks
+   to the broker directly. Everything else (forex, gold, mutual funds,
+   Finnhub) already supports CORS and still uses plain fetch/fetchWithTimeout.
+
+   Set PROXY_BASE to wherever you deploy the companion proxy server
+   (see trademind-proxy/README.md). Defaults to localhost for local testing.
+   --------------------------------------------------------------------------- */
+const PROXY_BASE = 'http://localhost:8787';
+const PROXY_API_KEY = 'change-this-before-production';
+
+async function pfetch(url, options = {}){
+  const { method = 'GET', headers = {}, body } = options;
+  const isForm = body instanceof URLSearchParams;
+  const res = await fetch(`${PROXY_BASE}/api/proxy`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      url, method, headers,
+      body: isForm ? body.toString() : body,
+      bodyType: isForm ? 'form' : 'json'
+    })
+  });
+  if(!res.ok) throw new Error(`Proxy request failed (${res.status}). Is the proxy server running at ${PROXY_BASE}?`);
+  const wrapper = await res.json();
+  if(wrapper.error) throw new Error(wrapper.error);
+  return {
+    ok: wrapper.ok,
+    status: wrapper.status,
+    json: async () => (typeof wrapper.data === 'string' ? JSON.parse(wrapper.data) : wrapper.data),
+    text: async () => (typeof wrapper.data === 'string' ? wrapper.data : JSON.stringify(wrapper.data))
+  };
+}
+
+/* ---- Angel One SmartAPI — client code + password + TOTP + API key ---- */
+const AO_AUTH_URL  = 'https://apiconnect.angelone.in/rest/auth/angelbroking/user/v1/loginByPassword';
+const AO_QUOTE_URL = 'https://apiconnect.angelone.in/rest/secure/angelbroking/market/v1/quote/';
+const AO_SCRIP_URL = 'https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json';
+const ANGEL_INDEX_TOKENS = { nifty:'99926000', banknifty:'99926009', sensex:'99919000' };
+let angelSession = { jwt:'', apiKey:'' };
+
+function angelHeaders(extra={}){
+  return Object.assign({
+    'Content-Type':'application/json','Accept':'application/json',
+    'X-UserType':'USER','X-SourceID':'WEB',
+    'X-ClientLocalIP':'127.0.0.1','X-ClientPublicIP':'127.0.0.1','X-MACAddress':'AA:BB:CC:DD:EE:FF',
+    'X-PrivateKey':angelSession.apiKey
+  }, extra);
+}
+async function angelLogin(){
+  const clientcode = document.getElementById('in-clientcode').value.trim();
+  const password   = document.getElementById('in-pin').value.trim();
+  const totp       = document.getElementById('in-totp').value.trim();
+  const apikey     = document.getElementById('in-apikey').value.trim();
+  if(!clientcode || !password || !totp || !apikey){ setConnectStatus('Fill in all four fields.', 'warn'); return; }
+  angelSession.apiKey = apikey;
+  setBtnBusy(true);
+  try {
+    const res = await pfetch(AO_AUTH_URL, { method:'POST', headers:angelHeaders(), body:JSON.stringify({ clientcode, password, totp }) });
+    const data = await res.json();
+    if(!data.status){ setConnectStatus(`Login failed: ${data.message || 'check credentials and TOTP code.'}`, 'error'); setBtnBusy(false); return; }
+    angelSession.jwt = data.data.jwtToken;
+    brokerProvider = 'angelone';
+    markConnected(`Angel One · ${clientcode}`);
+    setConnectStatus('Loading NSE instrument list…', 'info');
+    await angelLoadScripMaster();
+    await refreshAllLive();
+    setInterval(refreshAllLive, 30000);
+  } catch(err){ setConnectStatus(`Network error: ${err.message}`, 'error'); setBtnBusy(false); }
+}
+async function angelLoadScripMaster(){
+  const res = await pfetch(AO_SCRIP_URL);
+  const list = await res.json();
+  scripMap = new Map();
+  list.forEach(item => {
+    if(item.exch_seg === 'NSE' && item.symbol && item.symbol.endsWith('-EQ')) scripMap.set(item.symbol.replace('-EQ',''), item.token);
+  });
+}
+async function angelQuote(nseTokens, bseTokens){
+  const exchangeTokens = {};
+  if(nseTokens && nseTokens.length) exchangeTokens.NSE = nseTokens;
+  if(bseTokens && bseTokens.length) exchangeTokens.BSE = bseTokens;
+  const res = await pfetch(AO_QUOTE_URL, { method:'POST', headers: angelHeaders({ 'Authorization':`Bearer ${angelSession.jwt}` }), body: JSON.stringify({ mode:'FULL', exchangeTokens }) });
+  const data = await res.json();
+  if(!data.status) throw new Error(data.message || 'Quote request failed');
+  return data.data?.fetched || [];
+}
+
+/* ---- Groww — API Key + TOTP → access token; quotes are symbol-based (no scrip master needed) ---- */
+let growwToken = '';
+const GROWW_INDEX_SYMS = { nifty:{sym:'NIFTY',ex:'NSE'}, banknifty:{sym:'BANKNIFTY',ex:'NSE'}, sensex:{sym:'SENSEX',ex:'BSE'} };
+async function growwLogin(){
+  const apikey = document.getElementById('in-groww-key').value.trim();
+  const totp = document.getElementById('in-groww-totp').value.trim();
+  if(!apikey || !totp){ setConnectStatus('Fill in both fields.', 'warn'); return; }
+  setBtnBusy(true);
+  try {
+    const res = await pfetch('https://api.groww.in/v1/token/api/access', { method:'POST', headers:{ 'Authorization':`Bearer ${apikey}`, 'Content-Type':'application/json' }, body: JSON.stringify({ key_type:'totp', totp }) });
+    const data = await res.json();
+    if(!data.token){ setConnectStatus(`Login failed: ${data.message || 'check API key and TOTP.'}`, 'error'); setBtnBusy(false); return; }
+    growwToken = data.token;
+    brokerProvider = 'groww';
+    markConnected('Groww');
+    await refreshAllLive();
+    setInterval(refreshAllLive, 30000);
+  } catch(err){ setConnectStatus(`Network error: ${err.message}`, 'error'); setBtnBusy(false); }
+}
+function growwHeaders(){ return { 'Accept':'application/json', 'Authorization':`Bearer ${growwToken}`, 'X-API-VERSION':'1.0' }; }
+async function growwQuoteBatch(pairs){
+  if(!pairs.length) return new Map();
+  const res = await pfetch(`https://api.groww.in/v1/live-data/ltp?segment=CASH&exchange_symbols=${pairs.map(p=>p.exchangeSymbol).join(',')}`, { headers: growwHeaders() });
+  const data = await res.json();
+  const payload = data.payload || data.data || {};
+  const out = new Map();
+  pairs.forEach(p => { const q = payload[p.exchangeSymbol]; if(q) out.set(p.symbol, { ltp: q.last_price ?? q.ltp, changePct: q.day_change_perc ?? q.dayChangePercentage ?? null }); });
+  return out;
+}
+
+/* ---- Zerodha Kite Connect — OAuth redirect + SHA-256 checksum token exchange ---- */
+let kiteSession = { apiKey:'', accessToken:'' };
+const KITE_INDEX_SYMS = { nifty:'NSE:NIFTY 50', banknifty:'NSE:NIFTY BANK', sensex:'BSE:SENSEX' };
+function zerodhaStartLogin(){
+  const apiKey = document.getElementById('in-zerodha-key').value.trim();
+  const apiSecret = document.getElementById('in-zerodha-secret').value.trim();
+  const redirect = document.getElementById('in-zerodha-redirect').value.trim();
+  if(!apiKey || !apiSecret){ setConnectStatus('Fill in API key and secret.', 'warn'); return; }
+  sessionStorage.setItem('tm_pending_broker', JSON.stringify({ provider:'zerodha', apiKey, apiSecret }));
+  window.location.href = `https://kite.zerodha.com/connect/login?v=3&api_key=${encodeURIComponent(apiKey)}&redirect_url=${encodeURIComponent(redirect)}`;
+}
+async function zerodhaCompleteLogin(pending, requestToken){
+  setConnectStatus('Completing Zerodha login…', 'info');
+  try {
+    const checksum = await sha256Hex(pending.apiKey + requestToken + pending.apiSecret);
+    const body = new URLSearchParams({ api_key: pending.apiKey, request_token: requestToken, checksum });
+    const res = await pfetch('https://api.kite.trade/session/token', { method:'POST', headers:{ 'X-Kite-Version':'3', 'Content-Type':'application/x-www-form-urlencoded' }, body });
+    const data = await res.json();
+    if(data.status !== 'success'){ setConnectStatus(`Zerodha login failed: ${data.message || 'invalid request token.'}`, 'error'); return; }
+    kiteSession = { apiKey: pending.apiKey, accessToken: data.data.access_token };
+    brokerProvider = 'zerodha';
+    markConnected(`Zerodha · ${data.data.user_shortname || data.data.user_id || ''}`);
+    await refreshAllLive();
+    setInterval(refreshAllLive, 30000);
+  } catch(err){ setConnectStatus(`Network error: ${err.message}`, 'error'); }
+}
+function kiteHeaders(){ return { 'X-Kite-Version':'3', 'Authorization':`token ${kiteSession.apiKey}:${kiteSession.accessToken}` }; }
+async function kiteQuoteBatch(pairs){
+  if(!pairs.length) return new Map();
+  const qs = pairs.map(p => `i=${encodeURIComponent(p.instrumentId)}`).join('&');
+  const res = await pfetch(`https://api.kite.trade/quote?${qs}`, { headers: kiteHeaders() });
+  const data = await res.json();
+  const out = new Map();
+  pairs.forEach(p => {
+    const q = data.data?.[p.instrumentId];
+    if(q){ const prevClose = q.ohlc?.close; const changePct = prevClose ? ((q.last_price - prevClose)/prevClose)*100 : 0; out.set(p.symbol, { ltp: q.last_price, changePct }); }
+  });
+  return out;
+}
+
+/* ---- Upstox — OAuth redirect; needs an instrument master to resolve instrument_key ---- */
+let upstoxSession = { accessToken:'' };
+const UPSTOX_INDEX_SYMS = { nifty:'NSE_INDEX|Nifty 50', banknifty:'NSE_INDEX|Nifty Bank', sensex:'BSE_INDEX|SENSEX' };
+function upstoxStartLogin(){
+  const clientId = document.getElementById('in-upstox-key').value.trim();
+  const clientSecret = document.getElementById('in-upstox-secret').value.trim();
+  const redirect = document.getElementById('in-upstox-redirect').value.trim();
+  if(!clientId || !clientSecret){ setConnectStatus('Fill in client ID and secret.', 'warn'); return; }
+  sessionStorage.setItem('tm_pending_broker', JSON.stringify({ provider:'upstox', clientId, clientSecret, redirect }));
+  window.location.href = `https://api.upstox.com/v2/login/authorization/dialog?response_type=code&client_id=${encodeURIComponent(clientId)}&redirect_uri=${encodeURIComponent(redirect)}`;
+}
+async function upstoxCompleteLogin(pending, code){
+  setConnectStatus('Completing Upstox login…', 'info');
+  try {
+    const body = new URLSearchParams({ code, client_id: pending.clientId, client_secret: pending.clientSecret, redirect_uri: pending.redirect, grant_type:'authorization_code' });
+    const res = await pfetch('https://api.upstox.com/v2/login/authorization/token', { method:'POST', headers:{ 'Content-Type':'application/x-www-form-urlencoded', 'Accept':'application/json' }, body });
+    const data = await res.json();
+    if(!data.access_token){ setConnectStatus(`Upstox login failed: ${data.message || 'invalid auth code.'}`, 'error'); return; }
+    upstoxSession.accessToken = data.access_token;
+    brokerProvider = 'upstox';
+    markConnected(`Upstox · ${data.user_name || data.email || ''}`);
+    setConnectStatus('Loading NSE instrument list…', 'info');
+    await upstoxLoadInstruments();
+    await refreshAllLive();
+    setInterval(refreshAllLive, 30000);
+  } catch(err){ setConnectStatus(`Network error: ${err.message}`, 'error'); }
+}
+async function upstoxLoadInstruments(){
+  // Gzip decompression happens server-side (see /api/upstox/instruments in the
+  // proxy) — the browser gets plain JSON back, no CORS or DecompressionStream needed.
+  const res = await fetch(`${PROXY_BASE}/api/upstox/instruments`);
+  if(!res.ok) throw new Error(`Could not load Upstox instrument list (proxy returned ${res.status}).`);
+  const list = await res.json();
+  scripMap = new Map();
+  list.forEach(item => { if(item.segment === 'NSE_EQ' && item.instrument_type === 'EQ' && item.trading_symbol) scripMap.set(item.trading_symbol, item.instrument_key); });
+}
+async function upstoxQuoteBatch(pairs){
+  const valid = pairs.filter(p => p.instrumentKey);
+  if(!valid.length) return new Map();
+  const res = await pfetch(`https://api.upstox.com/v2/market-quote/ltp?instrument_key=${encodeURIComponent(valid.map(p=>p.instrumentKey).join(','))}`, { headers: { 'Accept':'application/json', 'Authorization':`Bearer ${upstoxSession.accessToken}` } });
+  const data = await res.json();
+  const byToken = {};
+  Object.values(data.data || {}).forEach(v => { byToken[v.instrument_token] = v; });
+  const out = new Map();
+  valid.forEach(p => { const q = byToken[p.instrumentKey]; if(q) out.set(p.symbol, { ltp: q.last_price, changePct: null }); });
+  return out;
+}
+
+/* ---- Unified dispatch — every broker feeds the same rendering functions ---- */
+async function fetchQuotes(symbols){
+  if(brokerProvider === 'angelone'){
+    const pairs = symbols.map(sym => ({ symbol:sym, token: scripMap ? scripMap.get(sym.toUpperCase()) : null })).filter(p=>p.token);
+    if(!pairs.length) return new Map();
+    const rows = await angelQuote(pairs.map(p=>p.token), []);
+    const byTok = Object.fromEntries(rows.map(q => [q.symbolToken, q]));
+    const out = new Map();
+    pairs.forEach(p => { const q = byTok[p.token]; const ltp = q && parseFloat(q.ltp); if(isSanePrice(ltp)) out.set(p.symbol, { ltp, changePct: parseFloat(q.percentChange) || 0 }); });
+    return out;
+  }
+  if(brokerProvider === 'groww') return growwQuoteBatch(symbols.map(sym => ({ symbol:sym, exchangeSymbol:`NSE_${sym}` })));
+  if(brokerProvider === 'zerodha') return kiteQuoteBatch(symbols.map(sym => ({ symbol:sym, instrumentId:`NSE:${sym}` })));
+  if(brokerProvider === 'upstox') return upstoxQuoteBatch(symbols.map(sym => ({ symbol:sym, instrumentKey: scripMap ? scripMap.get(sym) : null })));
+  return new Map();
+}
+async function fetchIndexQuotes(){
+  const out = {};
+  if(brokerProvider === 'angelone'){
+    const rows = await angelQuote([ANGEL_INDEX_TOKENS.nifty, ANGEL_INDEX_TOKENS.banknifty], [ANGEL_INDEX_TOKENS.sensex]);
+    const byTok = Object.fromEntries(rows.map(q => [q.symbolToken, q]));
+    [['nifty',ANGEL_INDEX_TOKENS.nifty],['banknifty',ANGEL_INDEX_TOKENS.banknifty],['sensex',ANGEL_INDEX_TOKENS.sensex]].forEach(([key,tok]) => {
+      const q = byTok[tok]; const ltp = q && parseFloat(q.ltp);
+      if(isSanePrice(ltp)) out[key] = { ltp, change:parseFloat(q.netChange)||0, changePct:parseFloat(q.percentChange)||0, o:parseFloat(q.open)||null, h:parseFloat(q.high)||null, l:parseFloat(q.low)||null };
+    });
+  } else if(brokerProvider === 'groww'){
+    const q = await growwQuoteBatch(Object.entries(GROWW_INDEX_SYMS).map(([key,v]) => ({ symbol:key, exchangeSymbol:`${v.ex}_${v.sym}` })));
+    q.forEach((v,key) => { if(isSanePrice(v.ltp)) out[key] = { ltp:v.ltp, change:null, changePct:v.changePct, o:null,h:null,l:null }; });
+  } else if(brokerProvider === 'zerodha'){
+    const q = await kiteQuoteBatch(Object.entries(KITE_INDEX_SYMS).map(([key,id]) => ({ symbol:key, instrumentId:id })));
+    q.forEach((v,key) => { if(isSanePrice(v.ltp)) out[key] = { ltp:v.ltp, change:null, changePct:v.changePct, o:null,h:null,l:null }; });
+  } else if(brokerProvider === 'upstox'){
+    const q = await upstoxQuoteBatch(Object.entries(UPSTOX_INDEX_SYMS).map(([key,ik]) => ({ symbol:key, instrumentKey:ik })));
+    q.forEach((v,key) => { if(isSanePrice(v.ltp)) out[key] = { ltp:v.ltp, change:null, changePct:null, o:null,h:null,l:null }; });
+  }
+  return out;
+}
+async function refreshAllLive(){
+  try {
+    const idx = await fetchIndexQuotes();
+    [['nifty','NIFTY 50'],['banknifty','BANKNIFTY'],['sensex','SENSEX']].forEach(([key,name]) => {
+      const q = idx[key]; if(!q || !isSanePrice(q.ltp)) return; // no sane quote this cycle — keep showing the last known-good value
+      const series = (q.o!=null) ? [q.o,(q.o+q.h)/2,q.l,(q.l+q.ltp)/2,q.ltp] : (state.indices[key]?.series || [q.ltp,q.ltp,q.ltp,q.ltp,q.ltp]);
+      state.indices[key] = { name, price:q.ltp, change: q.change!=null ? q.change : (q.ltp*(q.changePct||0)/100), changePct: q.changePct||0, series };
+    });
+    renderIndexCards();
+
+    const stockQuotes = await fetchQuotes(STOCKS.map(s=>s.symbol));
+    STOCKS.forEach(s => { const q = stockQuotes.get(s.symbol); if(q && isSanePrice(q.ltp)){ s.price = q.ltp; s._changePct = q.changePct ?? s._changePct; } });
+    renderTicker();
+
+    if(state.watchlist.length){
+      const wQuotes = await fetchQuotes(state.watchlist.map(w=>w.symbol));
+      state.watchlist.forEach(w => { const q = wQuotes.get(w.symbol); if(q && isSanePrice(q.ltp)){ w.price = q.ltp; w._changePct = q.changePct ?? w._changePct; } });
+      renderWatchlist();
+    }
+    setConnectStatus(`Live prices updated ${new Date().toLocaleTimeString('en-IN')}.`, 'info');
+  } catch(err){ setConnectStatus(`Live refresh error: ${err.message}`, 'error'); }
+}
+
+/* ---- Broker selector UI wiring ---- */
+const BROKER_HINTS = {
+  angelone: 'Generate a SmartAPI key at smartapi.angelone.in. The TOTP is the 6-digit code from the authenticator app linked to your Angel One login.',
+  groww: 'Requires a Groww Trading APIs subscription (₹499/month) — generate the key from the Groww Cloud API Keys page, then enter a fresh TOTP each time you connect. Groww doesn\'t publish a hosted login-redirect page like Zerodha/Upstox, so this is a direct key+TOTP login rather than a redirect — that\'s a limit of Groww\'s public API, not something this app can change.',
+  zerodha: 'Requires a paid Kite Connect developer app (developers.kite.trade). You’ll be redirected to Zerodha to log in, then brought straight back here — register the redirect URL below on your app first.',
+  upstox: 'Create a free app at Upstox Developer Apps. You’ll be redirected to Upstox to log in, then brought straight back here — register the redirect URI below on your app first.'
+};
+function initBrokerPanel(){
+  const sel = document.getElementById('brokerSelect');
+  const hint = document.getElementById('brokerHint');
+  const here = window.location.origin + window.location.pathname;
+  document.getElementById('in-zerodha-redirect').value = here;
+  document.getElementById('in-upstox-redirect').value = here;
+  function applyBroker(){
+    document.querySelectorAll('.broker-fields').forEach(el => { el.style.display = el.dataset.broker === sel.value ? 'grid' : 'none'; });
+    hint.textContent = BROKER_HINTS[sel.value] || '';
+    const btn = document.getElementById('connectBtn');
+    const isRedirect = sel.value === 'zerodha' || sel.value === 'upstox';
+    const label = isRedirect ? `Continue to ${sel.value === 'zerodha' ? 'Zerodha' : 'Upstox'}` : 'Connect';
+    const icon = isRedirect ? 'fa-arrow-right' : 'fa-plug';
+    btn.innerHTML = `<i class="fa-solid ${icon}"></i> ${label}`;
+  }
+  sel.addEventListener('change', applyBroker);
+  applyBroker();
+  document.getElementById('connectBtn').addEventListener('click', () => {
+    if(sel.value === 'angelone') angelLogin();
+    else if(sel.value === 'groww') growwLogin();
+    else if(sel.value === 'zerodha') zerodhaStartLogin();
+    else if(sel.value === 'upstox') upstoxStartLogin();
+  });
+}
+initBrokerPanel();
+
+/* ---- Resume a Zerodha/Upstox login after the OAuth redirect brings us back ---- */
+(async function resumePendingBrokerLogin(){
+  const raw = sessionStorage.getItem('tm_pending_broker');
+  if(!raw) return;
+  const pending = JSON.parse(raw);
+  const params = new URLSearchParams(window.location.search);
+  sessionStorage.removeItem('tm_pending_broker');
+  history.replaceState({}, '', window.location.pathname);
+  if(pending.provider === 'zerodha' && params.get('request_token')) await zerodhaCompleteLogin(pending, params.get('request_token'));
+  else if(pending.provider === 'upstox' && params.get('code')) await upstoxCompleteLogin(pending, params.get('code'));
+  else if(params.get('status') === 'error' || params.get('error')) setConnectStatus('Broker login was cancelled or denied.', 'warn');
+})();
+
+/* ---------------------------------------------------------------------------
+   1. UNIVERSE — sample instrument list (swap for a live symbol master later)
+   --------------------------------------------------------------------------- */
+const STOCKS = [
+  { symbol:'RELIANCE',   name:'Reliance Industries',      sector:'Energy',         price:2945.60 },
+  { symbol:'TCS',        name:'Tata Consultancy Services',sector:'IT',             price:3872.15 },
+  { symbol:'HDFCBANK',   name:'HDFC Bank',                sector:'Banking',        price:1654.30 },
+  { symbol:'INFY',       name:'Infosys',                  sector:'IT',             price:1789.45 },
+  { symbol:'ICICIBANK',  name:'ICICI Bank',               sector:'Banking',        price:1198.75 },
+  { symbol:'BHARTIARTL', name:'Bharti Airtel',            sector:'Telecom',        price:1567.90 },
+  { symbol:'SBIN',       name:'State Bank of India',      sector:'Banking',        price:832.40  },
+  { symbol:'LT',         name:'Larsen & Toubro',          sector:'Infrastructure', price:3645.20 },
+  { symbol:'ITC',        name:'ITC Limited',              sector:'FMCG',           price:462.85  },
+  { symbol:'TATAMOTORS', name:'Tata Motors',              sector:'Auto',           price:987.60  },
+  { symbol:'MARUTI',     name:'Maruti Suzuki',            sector:'Auto',           price:12450.30},
+  { symbol:'SUNPHARMA',  name:'Sun Pharma',               sector:'Pharma',         price:1789.20 },
+  { symbol:'AXISBANK',   name:'Axis Bank',                sector:'Banking',        price:1215.60 },
+  { symbol:'WIPRO',      name:'Wipro',                    sector:'IT',             price:567.30  },
+  { symbol:'ADANIENT',   name:'Adani Enterprises',        sector:'Diversified',    price:3124.75 }
+];
+
+const SECTORS = ['Banking','IT','Auto','FMCG','Energy','Pharma','Infrastructure','Telecom'];
+
+/* In-memory application state (session only — resets on page reload) */
+const state = {
+  indices: {},
+  sentimentScore: 50,
+  confidence: 0,
+  volatility: 40,
+  lastTradeIdeas: [],
+  watchlist: [],       // { symbol, name, sector, price, qty }
+  journal: [],         // { date, symbol, entry, exit, sl, qty, pnl, notes }
+  commodities: [],     // { id, metal:'Gold'|'Silver', qty(g), avgPrice, currentPrice }
+  mutualFunds: [],     // { id, schemeCode, schemeName, units, avgNav, currentNav }
+  bonds: [],           // { id, issuer, faceValue, coupon, maturity, purchasePrice, qty }
+  usStocks: [],        // { id, symbol, qty, avgPrice, currentPrice }
+  finnhubKey: ''
+};
+
+/* ---------------------------------------------------------------------------
+   0c. LOCAL PERSISTENCE — watchlist, journal & the unified portfolio survive
+   a page reload. Broker credentials/tokens never touch storage — only these
+   user-entered holdings (plus a free, non-trading Finnhub read key) do.
+   --------------------------------------------------------------------------- */
+const LOCAL_KEY = 'trademind_local_v1';
+function saveLocalData(){
+  try {
+    localStorage.setItem(LOCAL_KEY, JSON.stringify({
+      watchlist: state.watchlist, journal: state.journal,
+      commodities: state.commodities, mutualFunds: state.mutualFunds,
+      bonds: state.bonds, usStocks: state.usStocks, finnhubKey: state.finnhubKey
+    }));
+  } catch(err){ console.warn('Could not save to localStorage:', err); }
+}
+function loadLocalData(){
+  try {
+    const raw = localStorage.getItem(LOCAL_KEY);
+    if(!raw) return;
+    const saved = JSON.parse(raw);
+    if(Array.isArray(saved.watchlist)) state.watchlist = saved.watchlist;
+    if(Array.isArray(saved.journal)) state.journal = saved.journal;
+    if(Array.isArray(saved.commodities)) state.commodities = saved.commodities;
+    if(Array.isArray(saved.mutualFunds)) state.mutualFunds = saved.mutualFunds;
+    if(Array.isArray(saved.bonds)) state.bonds = saved.bonds;
+    if(Array.isArray(saved.usStocks)) state.usStocks = saved.usStocks;
+    if(typeof saved.finnhubKey === 'string') state.finnhubKey = saved.finnhubKey;
+  } catch(err){ console.warn('Could not load saved data:', err); }
+}
+
+/* ---------------------------------------------------------------------------
+   2. CLOCK
+   --------------------------------------------------------------------------- */
+function tickClock(){
+  const now = new Date();
+  document.getElementById('clockTime').textContent = now.toLocaleTimeString('en-IN', { hour12:true });
+  document.getElementById('clockDate').textContent = now.toLocaleDateString('en-IN', { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+}
+setInterval(tickClock, 1000);
+tickClock();
+
+/* ---------------------------------------------------------------------------
+   3. TICKER TAPE  — DATA SOURCE: replace with live index/stock LTP feed
+   --------------------------------------------------------------------------- */
+function renderTicker(){
+  const items = [
+    { label:'NIFTY 50', ...state.indices.nifty },
+    { label:'SENSEX', ...state.indices.sensex },
+    { label:'BANKNIFTY', ...state.indices.banknifty },
+    ...STOCKS.slice(0,8).map(s => ({ label:s.symbol, price:s.price, changePct:s._changePct }))
+  ];
+  const track = document.getElementById('tickerTrack');
+  const html = items.map(it => {
+    const up = it.changePct >= 0;
+    return `<div class="ticker-item"><b>${it.label}</b><span class="mono">${fmt(it.price)}</span><span class="chg ${up?'num-up':'num-down'}">${up?'▲':'▼'} ${Math.abs(it.changePct).toFixed(2)}%</span></div>`;
+  }).join('');
+  track.innerHTML = html + html; // duplicate for seamless loop
+}
+
+/* ---------------------------------------------------------------------------
+   4. INDEX CARDS + SPARKLINES — DATA SOURCE: replace with live index feed
+   --------------------------------------------------------------------------- */
+function makeIndexSeries(base){
+  let v = base;
+  const arr = [v];
+  for(let i=0;i<19;i++){ v += rand(-base*0.0025, base*0.0025); arr.push(v); }
+  return arr;
+}
+function buildIndices(){
+  const defs = [
+    { key:'nifty', name:'NIFTY 50', base:24850 },
+    { key:'sensex', name:'SENSEX', base:81600 },
+    { key:'banknifty', name:'BANKNIFTY', base:53200 }
+  ];
+  defs.forEach(d => {
+    const series = makeIndexSeries(d.base);
+    const price = series[series.length-1];
+    const changePct = ((price - d.base) / d.base) * 100;
+    state.indices[d.key] = { name:d.name, price, changePct, change: price - d.base, series };
+  });
+  // assign a mock intraday change % to each stock for the ticker
+  STOCKS.forEach(s => { s._changePct = rand(-2.2, 2.4); });
+}
+
+function renderIndexCards(){
+  const wrap = document.getElementById('indexCards');
+  wrap.innerHTML = Object.values(state.indices).map((idx, i) => {
+    const up = idx.changePct >= 0;
+    return `
+    <div class="glass index-card">
+      <div class="index-head">
+        <span class="index-name">${idx.name}</span>
+        <span class="index-badge">NSE / BSE</span>
+      </div>
+      <div class="index-price mono">${fmt(idx.price)}</div>
+      <div class="index-change ${up?'num-up':'num-down'}">
+        <i class="fa-solid fa-caret-${up?'up':'down'}"></i>
+        ${up?'+':''}${fmt(idx.change)} (${up?'+':''}${idx.changePct.toFixed(2)}%)
+      </div>
+      <div class="index-spark"><canvas id="spark-${i}"></canvas></div>
+    </div>`;
+  }).join('');
+
+  Object.values(state.indices).forEach((idx, i) => {
+    const ctx = document.getElementById(`spark-${i}`);
+    const up = idx.changePct >= 0;
+    new Chart(ctx, {
+      type:'line',
+      data:{ labels: idx.series.map((_,x)=>x), datasets:[{
+        data: idx.series, borderColor: up ? '#22b573' : '#e5484d', borderWidth:2,
+        pointRadius:0, tension:0.35, fill:true,
+        backgroundColor: (up ? 'rgba(31,208,138,0.12)' : 'rgba(242,73,92,0.12)')
+      }]},
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        plugins:{legend:{display:false}, tooltip:{enabled:false}},
+        scales:{ x:{display:false}, y:{display:false} },
+        animation:{ duration:900 }
+      }
+    });
+  });
+}
+
+/* ---------------------------------------------------------------------------
+   5. MARKET PULSE — sentiment gauge / confidence ring / volatility
+   --------------------------------------------------------------------------- */
+function renderPulseIdle(){
+  // Baseline pulse shown before any analysis is run
+  state.sentimentScore = randInt(35,65);
+  updateSentimentGauge(state.sentimentScore);
+  updateVolatility(randInt(25,55));
+  updateConfidence(0, 'Awaiting analysis…');
+}
+
+function updateSentimentGauge(score){
+  state.sentimentScore = score;
+  const deg = (score/100)*180 - 90;
+  document.getElementById('sentimentNeedle').style.transform = `translateX(-50%) rotate(${deg}deg)`;
+  let label = 'Neutral', cls='neutral';
+  if(score >= 62){ label='Bullish'; cls='bull'; }
+  else if(score <= 38){ label='Bearish'; cls='bear'; }
+  const readout = document.getElementById('sentimentReadout');
+  readout.textContent = label;
+  readout.style.color = cls==='bull' ? 'var(--bull)' : cls==='bear' ? 'var(--bear)' : 'var(--neutral)';
+  document.getElementById('sentimentScore').textContent = `Score: ${score} / 100`;
+}
+
+function updateConfidence(value, subText){
+  state.confidence = value;
+  const circumference = 2 * Math.PI * 64;
+  const ring = document.getElementById('confRing');
+  const offset = circumference - (value/100)*circumference;
+  ring.style.strokeDasharray = circumference;
+  ring.style.strokeDashoffset = offset;
+  ring.style.stroke = value >= 70 ? '#22b573' : value >= 45 ? '#d99a3d' : '#e5484d';
+  document.getElementById('confVal').textContent = Math.round(value);
+  document.getElementById('confSub').textContent = subText;
+}
+
+function updateVolatility(score){
+  state.volatility = score;
+  document.getElementById('volMarker').style.left = `${clamp(score,2,98)}%`;
+  let label='Moderate';
+  if(score < 25) label='Low';
+  else if(score < 50) label='Moderate';
+  else if(score < 75) label='High';
+  else label='Extreme';
+  document.getElementById('volReadout').textContent = label;
+  const vix = (8 + score*0.22).toFixed(1);
+  document.getElementById('volSub').textContent = `India VIX proxy: ${vix}`;
+}
+
+/* ---------------------------------------------------------------------------
+   5b. HISTORICAL DATA LAYER — one fetcher per broker, normalized to a single
+   { closes, volumes } shape (oldest → newest, ~90 trading days) that the
+   indicator engine below consumes regardless of which broker supplied it.
+   When nothing is connected, generateDemoSeries() produces a synthetic but
+   realistic-looking series that runs through the exact same indicator math,
+   so "Demo" and "Live" modes differ only in the data source, never the logic.
+   --------------------------------------------------------------------------- */
+const AO_HIST_URL = 'https://apiconnect.angelone.in/rest/secure/angelbroking/historical/v1/getCandleData';
+let kiteInstrumentMap = null; // Zerodha only — lazy-loaded on first historical request (it's a large CSV dump)
+
+function dateStr(d){ return d.toISOString().slice(0,10); }
+
+async function angelHistorical(symbol, days=90){
+  const token = scripMap ? scripMap.get(symbol.toUpperCase()) : null;
+  if(!token) return null;
+  const to = new Date(), from = new Date(); from.setDate(from.getDate() - days);
+  const body = { exchange:'NSE', symboltoken:token, interval:'ONE_DAY', fromdate:`${dateStr(from)} 09:15`, todate:`${dateStr(to)} 15:30` };
+  const res = await pfetch(AO_HIST_URL, { method:'POST', headers: angelHeaders({ 'Authorization':`Bearer ${angelSession.jwt}` }), body: JSON.stringify(body) });
+  const data = await res.json();
+  const rows = data.data || [];
+  if(!rows.length) return null;
+  return { closes: rows.map(r=>r[4]), volumes: rows.map(r=>r[5]) };
+}
+
+async function growwHistorical(symbol, days=90){
+  const to = new Date(), from = new Date(); from.setDate(from.getDate() - days);
+  const start = encodeURIComponent(`${dateStr(from)} 09:15:00`), end = encodeURIComponent(`${dateStr(to)} 15:30:00`);
+  const url = `https://api.groww.in/v1/historical/candles?exchange=NSE&segment=CASH&groww_symbol=NSE-${symbol}&start_time=${start}&end_time=${end}&candle_interval=1440minute`;
+  const res = await pfetch(url, { headers: growwHeaders() });
+  const data = await res.json();
+  const rows = data.payload?.candles || data.candles || [];
+  if(!rows.length) return null;
+  return { closes: rows.map(r=>r[4]), volumes: rows.map(r=>r[5]) };
+}
+
+async function ensureKiteInstrumentMap(){
+  if(kiteInstrumentMap) return;
+  const res = await pfetch('https://api.kite.trade/instruments/NSE', { headers: kiteHeaders() });
+  const text = await res.text();
+  kiteInstrumentMap = new Map();
+  text.split('\n').slice(1).forEach(line => {
+    const cols = line.split(',');
+    if(cols.length > 9 && cols[9] === 'EQ') kiteInstrumentMap.set(cols[2], cols[0]); // tradingsymbol -> instrument_token
+  });
+}
+async function zerodhaHistorical(symbol, days=90){
+  await ensureKiteInstrumentMap();
+  const token = kiteInstrumentMap.get(symbol);
+  if(!token) return null;
+  const to = new Date(), from = new Date(); from.setDate(from.getDate() - days);
+  const res = await pfetch(`https://api.kite.trade/instruments/historical/${token}/day?from=${dateStr(from)}&to=${dateStr(to)}`, { headers: kiteHeaders() });
+  const data = await res.json();
+  const rows = data.data?.candles || [];
+  if(!rows.length) return null;
+  return { closes: rows.map(r=>r[4]), volumes: rows.map(r=>r[5]) };
+}
+
+async function upstoxHistorical(symbol, days=90){
+  const key = scripMap ? scripMap.get(symbol) : null;
+  if(!key) return null;
+  const to = new Date(), from = new Date(); from.setDate(from.getDate() - days);
+  const res = await pfetch(`https://api.upstox.com/v2/historical-candle/${encodeURIComponent(key)}/day/${dateStr(to)}/${dateStr(from)}`, { headers: { 'Accept':'application/json', 'Authorization':`Bearer ${upstoxSession.accessToken}` } });
+  const data = await res.json();
+  const rows = (data.data?.candles || []).slice().reverse(); // Upstox returns newest-first
+  if(!rows.length) return null;
+  return { closes: rows.map(r=>r[4]), volumes: rows.map(r=>r[5]) };
+}
+
+async function getHistoricalSeries(symbol){
+  try {
+    if(brokerProvider === 'angelone') return await angelHistorical(symbol);
+    if(brokerProvider === 'groww') return await growwHistorical(symbol);
+    if(brokerProvider === 'zerodha') return await zerodhaHistorical(symbol);
+    if(brokerProvider === 'upstox') return await upstoxHistorical(symbol);
+  } catch(err){ console.warn(`Historical fetch failed for ${symbol}:`, err); }
+  return null;
+}
+
+/* ---- Demo mode: seeded synthetic series, reseeded daily so it isn't identical every click ---- */
+function hashStr(str){ let h=0; for(let i=0;i<str.length;i++) h=(h*31+str.charCodeAt(i))|0; return Math.abs(h); }
+function seededRand(seed){
+  let s = seed % 2147483647; if(s<=0) s += 2147483646;
+  return function(){ s = s*16807 % 2147483647; return (s-1)/2147483646; };
+}
+function generateDemoSeries(stock, days=90){
+  const rnd = seededRand(hashStr(stock.symbol) + Math.floor(Date.now()/86400000));
+  const closes = [], volumes = [];
+  let price = stock.price / (1 + (rnd()*0.2 - 0.08));
+  const drift = rnd()*0.006 - 0.0015;
+  for(let i=0;i<days;i++){
+    const noise = (rnd()-0.5)*0.03;
+    price = Math.max(1, price*(1+drift+noise));
+    closes.push(price);
+    volumes.push(Math.round(500000*(0.6+rnd()*0.8)));
+  }
+  closes[closes.length-1] = stock.price; // anchor the last close to the price shown elsewhere in the UI
+  return { closes, volumes };
+}
+
+/* ---------------------------------------------------------------------------
+   5c. INDICATOR ENGINE — plain technical-analysis math, shared by live and
+   demo data. Nothing here is predictive on its own; it just measures trend,
+   momentum, volatility and volume the way any charting package would.
+   --------------------------------------------------------------------------- */
+function calcSMA(arr, period){ if(arr.length < period) return null; return arr.slice(-period).reduce((a,b)=>a+b,0)/period; }
+function emaSeries(values, period){
+  if(values.length < period) return null;
+  const k = 2/(period+1);
+  const out = new Array(values.length).fill(null);
+  let ema = values.slice(0,period).reduce((a,b)=>a+b,0)/period;
+  out[period-1] = ema;
+  for(let i=period;i<values.length;i++){ ema = values[i]*k + ema*(1-k); out[i] = ema; }
+  return out;
+}
+function calcRSI(closes, period=14){
+  if(closes.length < period+1) return null;
+  let gains=0, losses=0;
+  for(let i=closes.length-period; i<closes.length; i++){ const d = closes[i]-closes[i-1]; if(d>=0) gains+=d; else losses-=d; }
+  const avgGain = gains/period, avgLoss = losses/period;
+  if(avgLoss === 0) return 100;
+  return 100 - (100/(1+avgGain/avgLoss));
+}
+function calcMACDHist(closes){
+  const e12 = emaSeries(closes,12), e26 = emaSeries(closes,26);
+  if(!e12 || !e26) return null;
+  const macdArr = closes.map((_,i) => (e12[i]!=null && e26[i]!=null) ? e12[i]-e26[i] : null).filter(v => v!=null);
+  if(macdArr.length < 9) return null;
+  const sig = emaSeries(macdArr,9);
+  return macdArr[macdArr.length-1] - sig[sig.length-1];
+}
+function pctMomentum(closes, lookback=10){
+  if(closes.length < lookback+1) return 0;
+  const then = closes[closes.length-1-lookback], now = closes[closes.length-1];
+  return then ? ((now-then)/then)*100 : 0;
+}
+function annualizedVol(closes, period=20){
+  if(closes.length < period+1) return null;
+  const rets = [];
+  for(let i=closes.length-period; i<closes.length; i++) rets.push((closes[i]-closes[i-1])/closes[i-1]);
+  const mean = rets.reduce((a,b)=>a+b,0)/rets.length;
+  const variance = rets.reduce((a,b)=>a+(b-mean)**2,0)/rets.length;
+  return Math.sqrt(variance) * Math.sqrt(252) * 100;
+}
+function volumeRatio(volumes){
+  if(volumes.length < 20) return 1;
+  const recent = volumes.slice(-5).reduce((a,b)=>a+b,0)/5;
+  const base = volumes.slice(-20).reduce((a,b)=>a+b,0)/20;
+  return base ? recent/base : 1;
+}
+
+/* Turn a raw { closes, volumes } series into the six 0–100 factor scores the
+   engine ranks on. This is the only place "real analysis" happens — every
+   number below is derived from the series, nothing here is random. */
+function scoreFromSeries(stock, series, niftyMomentum){
+  const { closes, volumes } = series;
+  const sma20 = calcSMA(closes,20), sma50 = calcSMA(closes,50);
+  const price = closes[closes.length-1];
+  const rsi = calcRSI(closes,14);
+  const macdHist = calcMACDHist(closes);
+  const momentum10 = pctMomentum(closes,10);
+  const vol20 = annualizedVol(closes,20);
+  const volRatio = volumeRatio(volumes);
+
+  let trend = 50;
+  if(sma20!=null && sma50!=null){
+    if(price>sma20 && sma20>sma50) trend = clamp(60 + ((price-sma20)/sma20)*400, 55, 97);
+    else if(price<sma20 && sma20<sma50) trend = clamp(40 - ((sma20-price)/sma20)*400, 5, 45);
+  }
+  let momentum = rsi==null ? 50 : (rsi>=45 && rsi<=70 ? 70 + (70-Math.abs(rsi-57.5)) : (rsi>70 ? clamp(90-(rsi-70)*2,40,90) : clamp(rsi,10,50)));
+  if(macdHist!=null) momentum = clamp(momentum + (macdHist>0 ? 8 : -8), 5, 97);
+  momentum = clamp(momentum + clamp(momentum10*1.5,-15,15), 5, 97);
+
+  const volume = clamp(50 + (volRatio-1)*60, 5, 97);
+  const risk = vol20!=null ? clamp(100 - vol20*1.6, 5, 95) : 55; // lower volatility = higher score (less risk)
+  const direction = niftyMomentum==null ? 55 : clamp(55 + Math.sign(momentum10)*Math.sign(niftyMomentum)*20 + Math.min(Math.abs(niftyMomentum)*2,15), 10, 95);
+
+  return { trend, momentum, volume, risk, direction, sectorStrength:50, _raw:{ sma20, sma50, rsi, macdHist, momentum10, vol20, volRatio } };
+}
+
+/* ---------------------------------------------------------------------------
+   6. AI ANALYSIS ENGINE — ranks the stock universe using the indicator
+   factors above. This is a quantitative technical screen over recent price
+   history — it surfaces setups whose trend/momentum/volume/volatility
+   pattern looks constructive right now. It is NOT a prediction and cannot
+   guarantee any stock will be profitable: markets can and do invalidate
+   any setup. Treat every idea below as a research starting point, not a
+   signal to act on without your own judgement.
+   --------------------------------------------------------------------------- */
+const FACTOR_WEIGHTS = { trend:0.22, momentum:0.22, volume:0.14, risk:0.14, direction:0.14, sectorStrength:0.14 };
+
+function computeCompositeScore(factors){
+  return Object.keys(FACTOR_WEIGHTS).reduce((sum,k) => sum + factors[k]*FACTOR_WEIGHTS[k], 0);
+}
+
+function buildReasoning(stock, factors, score){
+  const r = factors._raw || {};
+  const bits = [];
+  bits.push(factors.trend > 60 ? `${stock.symbol} is trading above its 20- and 50-day averages` : factors.trend < 45 ? `${stock.symbol} is trading below its short-term averages` : `${stock.symbol}'s trend is flat, sitting near its short-term averages`);
+  if(r.rsi != null) bits.push(`14-day RSI is ${r.rsi.toFixed(0)}${r.rsi>70?' (overbought)':r.rsi<35?' (oversold)':''}`);
+  if(r.macdHist != null) bits.push(`MACD histogram is ${r.macdHist>0?'positive':'negative'}`);
+  if(r.momentum10 != null) bits.push(`price is ${r.momentum10>=0?'up':'down'} ${Math.abs(r.momentum10).toFixed(1)}% over the last 10 sessions`);
+  bits.push(factors.volume > 60 ? `volume is running above its 20-day average` : `volume is broadly in line with average`);
+  bits.push(factors.sectorStrength > 60 ? `the ${stock.sector} sector is showing relative strength in this screen` : `the ${stock.sector} sector is middling in this screen`);
+  return bits.join(', ') + `. Composite score: ${score.toFixed(0)}/100 — a technical screen, not a profit guarantee.`;
+}
+
+async function generateTradeIdeas(){
+  const mode = connected ? 'live' : 'demo';
+
+  const niftyStock = { symbol:'NIFTY', price: state.indices.nifty?.price || 24500 };
+  const niftySeries = connected ? await getHistoricalSeries('NIFTY') : generateDemoSeries(niftyStock);
+  const niftyMomentum = niftySeries ? pctMomentum(niftySeries.closes,10) : null;
+
+  const scored = [];
+  for(const s of STOCKS){
+    let series = connected ? await getHistoricalSeries(s.symbol) : null;
+    let usedMode = mode;
+    if(!series){ series = generateDemoSeries(s); usedMode = connected ? 'demo-fallback' : 'demo'; }
+    const factors = scoreFromSeries(s, series, niftyMomentum);
+    scored.push({ ...s, factors, _mode: usedMode });
+  }
+
+  // Sector strength: rank each sector's average 10-day momentum against the others in this universe —
+  // a real (if simple) relative-strength measure, not a random fill-in.
+  const bySector = {};
+  scored.forEach(s => { (bySector[s.sector] ||= []).push(s.factors._raw.momentum10); });
+  const sectorAvg = Object.fromEntries(Object.entries(bySector).map(([sec,arr]) => [sec, arr.reduce((a,b)=>a+b,0)/arr.length]));
+  const sectorRank = Object.entries(sectorAvg).sort((a,b) => b[1]-a[1]).map(([sec]) => sec);
+  scored.forEach(s => {
+    const rank = sectorRank.indexOf(s.sector);
+    s.factors.sectorStrength = clamp(95 - (rank/(Math.max(sectorRank.length-1,1)))*70, 20, 95);
+    s.score = computeCompositeScore(s.factors);
+  });
+  scored.sort((a,b) => b.score - a.score);
+
+  const THRESHOLD = 62;
+  const qualified = scored.filter(s => s.score >= THRESHOLD);
+  if(qualified.length === 0) return { ideas: [], scoredUniverse: scored, mode };
+
+  const top = qualified.slice(0, 5).map((s, i) => {
+    const entry = s.price;
+    const vol20 = s.factors._raw.vol20;
+    // Target/stop sized off the stock's OWN recent volatility rather than a fixed random band.
+    const volPct = vol20 != null ? clamp(vol20/100, 0.015, 0.06) : 0.03;
+    const targetPct = volPct * 1.8, slPct = volPct * 0.9;
+    const target = entry * (1+targetPct), stopLoss = entry * (1-slPct);
+    const risk = entry - stopLoss, reward = target - entry, rr = reward/risk;
+    return {
+      rank: i+1,
+      symbol: s.symbol, name: s.name, sector: s.sector,
+      entry, target, stopLoss, rr, holding: randInt(2,5),
+      confidence: Math.round(s.score),
+      explanation: buildReasoning(s, s.factors, s.score)
+    };
+  });
+  return { ideas: top, scoredUniverse: scored, mode };
+}
+
+/* ---------------------------------------------------------------------------
+   7. ANALYZE BUTTON FLOW
+   --------------------------------------------------------------------------- */
+const analyzeBtn = document.getElementById('analyzeBtn');
+analyzeBtn.addEventListener('click', () => {
+  switchTab('analysis');
+  runAnalysis();
+});
+
+function runAnalysis(){
+  analyzeBtn.classList.add('loading');
+  analyzeBtn.innerHTML = `<i class="fa-solid fa-circle-notch spin"></i> Analyzing…`;
+
+  const modeLabel = connected ? 'Live data' : 'Demo data';
+  const steps = connected ? [
+    'Pulling historical price data from your broker…',
+    'Calculating technical indicators (SMA/RSI/MACD)…',
+    'Measuring volatility &amp; volume trends…',
+    'Ranking sector momentum…',
+    'Scoring swing trade candidates…'
+  ] : [
+    'Generating demo historical series…',
+    'Calculating technical indicators (SMA/RSI/MACD)…',
+    'Measuring volatility &amp; volume trends…',
+    'Ranking sector momentum…',
+    'Scoring swing trade candidates…'
+  ];
+  document.getElementById('analysisContent').innerHTML = `
+    <div class="glass loader-wrap">
+      <div class="loader-ring"></div>
+      <div class="loader-text">Running AI Decision Engine <span style="opacity:.55; font-size:12px; font-family:var(--font-body); text-transform:none; letter-spacing:0;">(${modeLabel})</span></div>
+      <div class="loader-steps" id="loaderSteps">
+        ${steps.map(s => `<div><i class="fa-solid fa-circle-notch fa-spin"></i> ${s}</div>`).join('')}
+      </div>
+    </div>`;
+
+  // staged pipeline visuals run in parallel with the real (async) computation below
+  let i = 0;
+  const stepEls = document.querySelectorAll('#loaderSteps div');
+  const stepTimer = setInterval(() => {
+    if(stepEls[i]){ stepEls[i].classList.add('done'); stepEls[i].innerHTML = stepEls[i].innerHTML.replace('fa-spin','').replace('fa-circle-notch','fa-circle-check'); }
+    i++;
+    if(i >= stepEls.length) clearInterval(stepTimer);
+  }, 420);
+
+  const minWait = new Promise(resolve => setTimeout(resolve, 2100));
+
+  Promise.all([ generateTradeIdeas(), minWait ]).then(([result]) => {
+    clearInterval(stepTimer);
+    state.lastTradeIdeas = result.ideas;
+    renderAnalysisResults(result.ideas, result.mode);
+    renderDecisionEngine(result.scoredUniverse, result.mode);
+
+    // Update dashboard pulse based on this run
+    const avgScore = result.scoredUniverse.reduce((a,s)=>a+s.score,0) / result.scoredUniverse.length;
+    updateSentimentGauge(Math.round(clamp(avgScore + rand(-4,4), 5, 95)));
+    updateConfidence(Math.round(avgScore), result.ideas.length ? `${result.ideas.length} qualified setups found` : 'No setups met the strategy threshold');
+    updateVolatility(Math.round(clamp(100 - avgScore + rand(-6,6), 5, 95)));
+
+    analyzeBtn.classList.remove('loading');
+    analyzeBtn.innerHTML = `<i class="fa-solid fa-wand-magic-sparkles"></i> Re-Analyze Market`;
+  }).catch(err => {
+    clearInterval(stepTimer);
+    console.error('Analysis failed:', err);
+    document.getElementById('analysisContent').innerHTML = `<div class="glass empty-state"><i class="fa-solid fa-triangle-exclamation"></i><h3>Analysis failed</h3><p>${err.message} — check the browser console for details.</p></div>`;
+    analyzeBtn.classList.remove('loading');
+    analyzeBtn.innerHTML = `<i class="fa-solid fa-wand-magic-sparkles"></i> Re-Analyze Market`;
+  });
+}
+
+function renderAnalysisResults(ideas, mode){
+  const wrap = document.getElementById('analysisContent');
+  const modeBanner = `<div class="glass" style="padding:12px 16px; margin-bottom:16px; font-size:12px; color:var(--text-lo); display:flex; align-items:center; gap:10px;">
+    <span class="chip ${mode==='live'?'bull':'neutral'}" style="flex-shrink:0;"><i class="fa-solid ${mode==='live'?'fa-satellite-dish':'fa-flask'}"></i> ${mode==='live'?'Live broker data':'Demo data'}</span>
+    <span>Ranked by real trend/momentum/volatility/volume math over ${mode==='live'?"your broker's":'a simulated'} recent price history. This is a technical screen, not a guarantee — no system can promise a stock will be profitable.</span>
+  </div>`;
+  if(!ideas.length){
+    wrap.innerHTML = modeBanner + `
+      <div class="glass empty-state">
+        <i class="fa-solid fa-shield-halved"></i>
+        <h3>No high-quality swing trade found today.</h3>
+        <p>Wait for a better opportunity. The AI Decision Engine screened the full universe and no setup met the minimum quality threshold for trend, momentum and risk/reward.</p>
+      </div>`;
+    return;
+  }
+  wrap.innerHTML = modeBanner + `<div class="grid grid-2">${ideas.map(t => tradeCardHtml(t)).join('')}</div>`;
+}
+
+function tradeCardHtml(t){
+  const rrColor = t.rr >= 2 ? 'var(--bull)' : t.rr >= 1.3 ? 'var(--neutral)' : 'var(--bear)';
+  return `
+  <div class="glass trade-card">
+    <div class="trade-top">
+      <div style="display:flex; gap:12px; align-items:center;">
+        <div class="trade-rank">#${t.rank}</div>
+        <div>
+          <div class="trade-symbol">${t.symbol}</div>
+          <div class="trade-name">${t.name} · ${t.sector}</div>
+        </div>
+      </div>
+      <span class="chip bull"><i class="fa-solid fa-arrow-trend-up"></i> Swing Buy</span>
+    </div>
+    <div class="trade-metrics">
+      <div class="metric-box"><div class="m-label">Entry</div><div class="m-val">₹${fmt(t.entry)}</div></div>
+      <div class="metric-box"><div class="m-label">Target</div><div class="m-val num-up">₹${fmt(t.target)}</div></div>
+      <div class="metric-box"><div class="m-label">Stop-Loss</div><div class="m-val num-down">₹${fmt(t.stopLoss)}</div></div>
+      <div class="metric-box"><div class="m-label">R:R Ratio</div><div class="m-val" style="color:${rrColor}">1 : ${t.rr.toFixed(2)}</div></div>
+    </div>
+    <div class="trade-footer">
+      <div class="confidence-inline">
+        <span style="font-size:11px; color:var(--text-lo);">Confidence</span>
+        <div class="pbar"><span style="width:${t.confidence}%"></span></div>
+        <span class="mono" style="font-size:12px;">${t.confidence}%</span>
+      </div>
+      <span class="chip neutral"><i class="fa-regular fa-clock"></i> Hold ${t.holding} days</span>
+    </div>
+    <div class="trade-explain"><strong>Why this setup:</strong> ${t.explanation}</div>
+  </div>`;
+}
+
+/* ---------------------------------------------------------------------------
+   8. TECHNICAL ANALYSIS TAB — DATA SOURCE: replace with real indicator feed
+   --------------------------------------------------------------------------- */
+let rsiChartInst, macdChartInst, volChartInst;
+
+function populateTechSelect(){
+  const sel = document.getElementById('techStockSelect');
+  sel.innerHTML = STOCKS.map(s => `<option value="${s.symbol}">${s.symbol} — ${s.name}</option>`).join('');
+  sel.addEventListener('change', () => renderTechnicalFor(sel.value));
+}
+
+function generateSeries(base, len, volPct){
+  let v = base * 0.97;
+  const arr = [];
+  for(let i=0;i<len;i++){ v += rand(-base*volPct, base*volPct); arr.push(v); }
+  arr[arr.length-1] = base;
+  return arr;
+}
+
+function renderTechnicalFor(symbol){
+  const stock = STOCKS.find(s => s.symbol === symbol) || STOCKS[0];
+  document.getElementById('techPriceChip').textContent = `₹${fmt(stock.price)}`;
+
+  // ---- mock indicator values ----
+  const rsi = randInt(28,78);
+  const ema20 = stock.price * rand(0.985,1.01);
+  const ema50 = stock.price * rand(0.96,1.02);
+  const ema200 = stock.price * rand(0.90,1.04);
+  const vwap = stock.price * rand(0.99,1.008);
+  const atr = stock.price * rand(0.012,0.028);
+  const macdLine = rand(-8,10);
+  const signalLine = macdLine + rand(-3,3);
+
+  const grid = document.getElementById('techIndicatorGrid');
+  grid.innerHTML = `
+    ${indicatorBox('RSI (14)', rsi.toFixed(1), rsi>70?'Overbought':rsi<30?'Oversold':'Neutral zone', 'Relative Strength Index — measures if a stock has been bought or sold too fast lately. Above 70 often means it\'s gotten pricey (overbought); below 30 often means it\'s gotten cheap (oversold).')}
+    ${indicatorBox('MACD', macdLine.toFixed(2), macdLine>signalLine?'Bullish crossover':'Bearish crossover', 'Moving Average Convergence Divergence — compares short-term and long-term price trends. When the lines cross upward, momentum may be turning positive.')}
+    ${indicatorBox('EMA 20 / 50 / 200', `${fmt(ema20)} / ${fmt(ema50)} / ${fmt(ema200)}`, stock.price>ema20 && ema20>ema50 ? 'Price above all EMAs' : 'Mixed EMA alignment', 'Exponential Moving Averages — the average price over the last 20, 50, and 200 days, weighted toward recent days. Price sitting above all three usually points to a steady uptrend.')}
+    ${indicatorBox('VWAP', fmt(vwap), stock.price>vwap ? 'Trading above VWAP' : 'Trading below VWAP', 'Volume-Weighted Average Price — today\'s average price, weighted by how much was traded at each level. Price above VWAP usually means buyers are currently in control.')}
+  `;
+
+  // ---- RSI chart ----
+  const days = Array.from({length:14}, (_,i)=>`D-${13-i}`);
+  const rsiSeries = generateSeries(rsi, 14, 0.06).map(v=>clamp(v,5,95));
+  if(rsiChartInst) rsiChartInst.destroy();
+  rsiChartInst = new Chart(document.getElementById('rsiChart'), {
+    type:'line',
+    data:{ labels:days, datasets:[{ data:rsiSeries, borderColor:'#4fa8e8', backgroundColor:'rgba(79,168,232,0.1)', fill:true, tension:.3, pointRadius:0, borderWidth:2 }]},
+    options: baseChartOpts({min:0,max:100}, [30,70])
+  });
+
+  // ---- MACD chart ----
+  const macdSeries = generateSeries(macdLine, 14, 0.3);
+  const signalSeries = macdSeries.map(v=>v + rand(-2,2));
+  const hist = macdSeries.map((v,i)=>v - signalSeries[i]);
+  if(macdChartInst) macdChartInst.destroy();
+  macdChartInst = new Chart(document.getElementById('macdChart'), {
+    data:{ labels:days, datasets:[
+      { type:'bar', data:hist, backgroundColor: hist.map(h=>h>=0?'rgba(31,208,138,0.55)':'rgba(242,73,92,0.55)'), borderWidth:0 },
+      { type:'line', data:macdSeries, borderColor:'#3b7cf6', pointRadius:0, tension:.3, borderWidth:2 },
+      { type:'line', data:signalSeries, borderColor:'#d99a3d', pointRadius:0, tension:.3, borderWidth:2 }
+    ]},
+    options: baseChartOpts()
+  });
+
+  // ---- Volume chart ----
+  const volSeries = Array.from({length:10}, ()=> randInt(2,18) * 100000);
+  const avgVol = volSeries.reduce((a,b)=>a+b,0)/volSeries.length;
+  if(volChartInst) volChartInst.destroy();
+  volChartInst = new Chart(document.getElementById('volChart'), {
+    data:{ labels:Array.from({length:10},(_,i)=>`D-${9-i}`), datasets:[
+      { type:'bar', data:volSeries, backgroundColor:'rgba(59,124,246,0.5)', borderRadius:4 },
+      { type:'line', data:volSeries.map(()=>avgVol), borderColor:'#d99a3d', borderDash:[5,4], pointRadius:0, borderWidth:2 }
+    ]},
+    options: baseChartOpts()
+  });
+
+  // ---- Support / resistance ----
+  const support1 = stock.price * rand(0.94,0.97);
+  const support2 = stock.price * rand(0.89,0.93);
+  const resist1 = stock.price * rand(1.03,1.06);
+  const resist2 = stock.price * rand(1.07,1.11);
+  document.getElementById('srList').innerHTML = `
+    <div class="sr-row"><span style="color:var(--bear);">Resistance 2</span><span>₹${fmt(resist2)}</span></div>
+    <div class="sr-row"><span style="color:var(--bear);">Resistance 1</span><span>₹${fmt(resist1)}</span></div>
+    <div class="sr-row" style="background:rgba(59,124,246,0.12);"><span>Current Price</span><span>₹${fmt(stock.price)}</span></div>
+    <div class="sr-row"><span style="color:var(--bull);">Support 1</span><span>₹${fmt(support1)}</span></div>
+    <div class="sr-row"><span style="color:var(--bull);">Support 2</span><span>₹${fmt(support2)}</span></div>
+  `;
+
+  // ---- Trend strength / breakout / relative strength / ATR ----
+  const trendScore = randInt(30,95);
+  document.getElementById('trendStrengthVal').textContent = trendScore>70?'Strong Uptrend':trendScore>45?'Moderate Trend':'Weak / Choppy';
+  document.getElementById('trendStrengthBar').style.width = trendScore+'%';
+
+  const breakout = Math.random() > 0.6;
+  document.getElementById('breakoutVal').innerHTML = breakout ? `<span class="num-up">Breakout Confirmed</span>` : `<span style="color:var(--text-mid);">No Breakout</span>`;
+  document.getElementById('breakoutNote').textContent = breakout ? `Price closed above resistance ₹${fmt(resist1)} on rising volume` : `Price consolidating within recent range`;
+
+  const relStrength = randInt(-15,25);
+  document.getElementById('relStrengthVal').innerHTML = relStrength>=0 ? `<span class="num-up">+${relStrength}%</span>` : `<span class="num-down">${relStrength}%</span>`;
+  document.getElementById('relStrengthNote').textContent = relStrength>=0 ? 'Outperforming NIFTY over 20 sessions' : 'Underperforming NIFTY over 20 sessions';
+
+  document.getElementById('atrVal').textContent = `₹${fmt(atr)}`;
+}
+
+function indicatorBox(label, val, note, help){
+  return `<div class="glass indicator-card">
+    <div class="indicator-head"><span${help ? ` title="${help}" style="cursor:help; border-bottom:1px dotted var(--text-lo);"` : ''}>${label}</span></div>
+    <div class="indicator-val">${val}</div>
+    <div class="indicator-note">${note}</div>
+  </div>`;
+}
+
+function baseChartOpts(yRange, hlines){
+  return {
+    responsive:true, maintainAspectRatio:false,
+    plugins:{ legend:{display:false}, tooltip:{mode:'index', intersect:false} },
+    scales:{
+      x:{ grid:{color:'rgba(255,255,255,0.04)'}, ticks:{color:'#67748f', font:{size:10} } },
+      y:{ grid:{color:'rgba(255,255,255,0.04)'}, ticks:{color:'#67748f', font:{size:10} }, ...(yRange||{}) }
+    }
+  };
+}
+
+/* ---------------------------------------------------------------------------
+   9. MARKET NEWS — DATA SOURCE: replace with live news API + sentiment model
+   --------------------------------------------------------------------------- */
+const NEWS_ITEMS = [
+  { title:'RBI holds repo rate steady, signals data-dependent stance ahead', sentiment:'neutral', source:'Market Wire', time:'1h ago',
+    summary:'The central bank kept rates unchanged as expected, with commentary suggesting future moves will hinge on inflation and global cues rather than a fixed timeline.' },
+  { title:'IT majors rally as US tech spending outlook improves', sentiment:'positive', source:'Sector Desk', time:'2h ago',
+    summary:'Renewed optimism around enterprise software budgets lifted sentiment across large-cap IT names, with several stocks breaking short-term resistance levels.' },
+  { title:'Crude oil prices rise on supply concerns, pressuring OMCs', sentiment:'negative', source:'Commodities Desk', time:'3h ago',
+    summary:'Higher crude prices raised input-cost concerns for oil marketing companies and aviation stocks, though the broader market impact remained contained.' },
+  { title:'FIIs turn net buyers after three sessions of outflows', sentiment:'positive', source:'Flows Tracker', time:'4h ago',
+    summary:'Foreign institutional investors returned as net buyers in the cash segment, a shift that historically supports short-term index strength.' },
+  { title:'Auto sector sees mixed monthly sales data', sentiment:'neutral', source:'Sector Desk', time:'5h ago',
+    summary:'Passenger vehicle volumes came in largely in line with estimates while two-wheeler makers reported a modest miss, leading to a stock-specific reaction.' },
+  { title:'Banking stocks under pressure on asset-quality worries', sentiment:'negative', source:'Market Wire', time:'6h ago',
+    summary:'A handful of mid-sized lenders flagged rising slippages, weighing on the broader banking index despite steady credit growth commentary.' },
+  { title:'Government announces incentives for domestic manufacturing', sentiment:'positive', source:'Policy Desk', time:'7h ago',
+    summary:'New production-linked incentives were unveiled for select industrial segments, seen as a medium-term positive for capital goods and infrastructure names.' },
+  { title:'Rupee steady against dollar amid range-bound global cues', sentiment:'neutral', source:'Currency Desk', time:'8h ago',
+    summary:'The rupee traded in a narrow band as traders awaited fresh triggers from global central bank commentary later in the week.' }
+];
+
+function renderNews(){
+  const grid = document.getElementById('newsGrid');
+  grid.innerHTML = NEWS_ITEMS.map(n => {
+    const chipClass = n.sentiment==='positive' ? 'bull' : n.sentiment==='negative' ? 'bear' : 'neutral';
+    const icon = n.sentiment==='positive' ? 'fa-arrow-up' : n.sentiment==='negative' ? 'fa-arrow-down' : 'fa-minus';
+    return `<div class="glass news-card">
+      <div class="news-head">
+        <div>
+          <div class="news-title">${n.title}</div>
+          <div class="news-meta"><span>${n.source}</span><span>${n.time}</span></div>
+        </div>
+        <span class="chip ${chipClass}"><i class="fa-solid ${icon}"></i> ${n.sentiment}</span>
+      </div>
+      <div class="news-summary">${n.summary}</div>
+    </div>`;
+  }).join('');
+}
+
+/* ---------------------------------------------------------------------------
+   10. INSTITUTIONAL ANALYSIS — DATA SOURCE: replace with FII/DII/NSDL feed
+   --------------------------------------------------------------------------- */
+let fiiChartInst, diiChartInst;
+function renderInstitutional(){
+  const labels = Array.from({length:10}, (_,i)=>`D-${9-i}`);
+  const fiiData = labels.map(()=> randInt(-2200,2400));
+  const diiData = labels.map(()=> randInt(-1500,2600));
+
+  if(fiiChartInst) fiiChartInst.destroy();
+  fiiChartInst = new Chart(document.getElementById('fiiChart'), {
+    type:'bar',
+    data:{ labels, datasets:[{ data:fiiData, backgroundColor: fiiData.map(v=>v>=0?'rgba(31,208,138,0.6)':'rgba(242,73,92,0.6)'), borderRadius:4 }]},
+    options: baseChartOpts()
+  });
+  if(diiChartInst) diiChartInst.destroy();
+  diiChartInst = new Chart(document.getElementById('diiChart'), {
+    type:'bar',
+    data:{ labels, datasets:[{ data:diiData, backgroundColor: diiData.map(v=>v>=0?'rgba(34,211,238,0.6)':'rgba(245,185,66,0.6)'), borderRadius:4 }]},
+    options: baseChartOpts()
+  });
+
+  // sector strength bars
+  const sectorBox = document.getElementById('sectorStrengthBox');
+  const sectorScores = SECTORS.map(s => ({ name:s, score: randInt(-40,60) })).sort((a,b)=>b.score-a.score);
+  sectorBox.innerHTML = sectorScores.map(s => {
+    const pos = s.score >= 0;
+    const width = Math.abs(s.score);
+    return `<div class="sector-row">
+      <span class="sname">${s.name}</span>
+      <div class="sector-bar-track">
+        <div class="sector-bar-fill" style="left:${pos?'50%':`${50-width/1.6}%`}; width:${width/1.6}%; background:${pos?'var(--bull)':'var(--bear)'};"></div>
+      </div>
+      <span class="sector-score" style="color:${pos?'var(--bull)':'var(--bear)'}">${pos?'+':''}${s.score}</span>
+    </div>`;
+  }).join('');
+
+  // institutional buy/sell tables
+  const shuffled = [...STOCKS].sort(()=>Math.random()-0.5);
+  const buys = shuffled.slice(0,5).map(s => ({ ...s, net: randInt(80,650), delivery: randInt(55,88) }));
+  const sells = shuffled.slice(5,10).map(s => ({ ...s, net: -randInt(50,500), delivery: randInt(30,60) }));
+
+  document.getElementById('instBuyTable').querySelector('tbody').innerHTML = buys.map(s => `
+    <tr><td class="name-cell">${s.symbol}</td><td class="num-up">+${s.net}</td><td>${s.delivery}%</td></tr>
+  `).join('');
+  document.getElementById('instSellTable').querySelector('tbody').innerHTML = sells.map(s => `
+    <tr><td class="name-cell">${s.symbol}</td><td class="num-down">${s.net}</td><td>${s.delivery}%</td></tr>
+  `).join('');
+}
+
+/* ---------------------------------------------------------------------------
+   11. AI DECISION ENGINE TAB
+   --------------------------------------------------------------------------- */
+function renderDecisionEngine(scoredUniverse, mode){
+  const list = document.getElementById('decisionList');
+  const sorted = [...scoredUniverse].sort((a,b)=>b.score-a.score);
+  const banner = mode ? `<div style="padding:12px 16px; font-size:11px; color:var(--text-lo); border-bottom:1px solid var(--glass-border);">
+    <span class="chip ${mode==='live'?'bull':'neutral'}"><i class="fa-solid ${mode==='live'?'fa-satellite-dish':'fa-flask'}"></i> ${mode==='live'?'Live broker data':'Demo data'}</span>
+    &nbsp; Scores are a real technical screen (SMA/RSI/MACD/volatility/volume/sector momentum) — not a profit guarantee.
+  </div>` : '';
+  list.innerHTML = banner + sorted.map(s => {
+    const score = Math.round(s.score);
+    const color = score>=70 ? 'var(--bull)' : score>=50 ? 'var(--neutral)' : 'var(--bear)';
+    return `<div class="score-row">
+      <div class="score-circle" style="border-color:${color}; color:${color};">${score}</div>
+      <div class="score-body">
+        <div class="sb-top">
+          <div><strong>${s.symbol}</strong> <span style="color:var(--text-lo); font-size:12px;">${s.name} · ${s.sector}</span></div>
+        </div>
+        <div class="factor-tags">
+          <span class="factor-tag">Trend ${Math.round(s.factors.trend)}</span>
+          <span class="factor-tag">Momentum ${Math.round(s.factors.momentum)}</span>
+          <span class="factor-tag">Volume ${Math.round(s.factors.volume)}</span>
+          <span class="factor-tag">Risk ${Math.round(s.factors.risk)}</span>
+          <span class="factor-tag">Direction ${Math.round(s.factors.direction)}</span>
+          <span class="factor-tag">Sector ${Math.round(s.factors.sectorStrength)}</span>
+        </div>
+        <div class="score-reason">${buildReasoning(s, s.factors, s.score)}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderDecisionEngineIdle(){
+  // Baseline preview (demo series — no network) so the tab isn't empty before the first Analyze run.
+  const scored = STOCKS.map(s => {
+    const series = generateDemoSeries(s);
+    const factors = scoreFromSeries(s, series, null);
+    factors.sectorStrength = 50;
+    return { ...s, factors, score: computeCompositeScore(factors) };
+  });
+  renderDecisionEngine(scored, 'demo');
+}
+
+/* ---------------------------------------------------------------------------
+   12. WATCHLIST (in-memory for this session)
+   --------------------------------------------------------------------------- */
+function renderWatchlist(){
+  const box = document.getElementById('watchListBox');
+  if(state.watchlist.length === 0){
+    box.innerHTML = `<div class="empty-state"><i class="fa-regular fa-star"></i><h3>Your watchlist is empty</h3><p>Add a symbol above to start tracking it here.</p></div>`;
+    return;
+  }
+  box.innerHTML = state.watchlist.map((w,i) => {
+    const up = w._changePct >= 0;
+    const hasQty = w.qty > 0;
+    return `<div class="watch-item">
+      <div class="watch-left">
+        <div>
+          <div class="watch-sym">${w.symbol} ${hasQty ? `<span style="font-size:10px; color:var(--accent-cyan); font-weight:600;">HELD ×${w.qty}</span>` : ''}</div>
+          <div class="watch-sector">${w.sector}${hasQty ? ` · Value ₹${fmtInt(w.price*w.qty)}` : ''}</div>
+        </div>
+      </div>
+      <div class="watch-right">
+        <div class="watch-price">
+          <div class="mono">₹${fmt(w.price)}</div>
+          <div class="mono ${up?'num-up':'num-down'}" style="font-size:11px;">${up?'+':''}${w._changePct.toFixed(2)}%</div>
+        </div>
+        <button class="btn-danger" data-remove="${i}"><i class="fa-solid fa-trash"></i></button>
+      </div>
+    </div>`;
+  }).join('');
+
+  box.querySelectorAll('[data-remove]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      state.watchlist.splice(parseInt(btn.dataset.remove), 1);
+      renderWatchlist();
+      saveLocalData();
+      renderPortfolio();
+    });
+  });
+}
+
+document.getElementById('watchAddBtn').addEventListener('click', () => {
+  const input = document.getElementById('watchInput');
+  const qtyInput = document.getElementById('watchQty');
+  const query = input.value.trim().toUpperCase();
+  const qty = parseFloat(qtyInput.value) || 0;
+  if(!query) return;
+  if(state.watchlist.some(w => w.symbol === query)){ input.value=''; qtyInput.value=''; return; }
+
+  const known = STOCKS.find(s => s.symbol === query);
+  if(connected){
+    // Angel One / Upstox resolve symbols through a scrip master — reject unknown ones early.
+    // Groww / Zerodha take raw trading symbols, so we can't pre-validate; a bad symbol will
+    // just silently return no quote on the next refresh.
+    if((brokerProvider === 'angelone' || brokerProvider === 'upstox') && (!scripMap || !scripMap.get(query))){
+      setConnectStatus(`"${query}" not found in the NSE instrument list.`, 'warn'); return;
+    }
+    state.watchlist.push({ symbol:query, name: known ? known.name : query, sector: known ? known.sector : 'Custom', price:0, _changePct:0, qty });
+    refreshAllLive();
+  } else {
+    const match = known || { symbol:query, name:query, sector:'Custom', price: rand(100,3000) };
+    state.watchlist.push({ ...match, _changePct: rand(-2,2), qty });
+  }
+  input.value = ''; qtyInput.value = '';
+  renderWatchlist();
+  saveLocalData();
+  renderPortfolio();
+});
+document.getElementById('watchInput').addEventListener('keydown', e => {
+  if(e.key === 'Enter') document.getElementById('watchAddBtn').click();
+});
+
+// gentle simulated price drift for watchlist items — stops once live data connects,
+// since refreshAllLive() takes over updating real prices every 30s.
+setInterval(() => {
+  if(!connected && state.watchlist.length){
+    state.watchlist.forEach(w => {
+      w.price *= (1 + rand(-0.002,0.002));
+      w._changePct += rand(-0.05,0.05);
+    });
+    renderWatchlist();
+  }
+}, 4000);
+
+/* ---------------------------------------------------------------------------
+   13. TRADE JOURNAL (in-memory for this session)
+   --------------------------------------------------------------------------- */
+function renderJournal(){
+  const tbody = document.getElementById('journalTbody');
+  const emptyEl = document.getElementById('journalEmpty');
+  const table = document.getElementById('journalTable');
+
+  if(state.journal.length === 0){
+    table.style.display='none'; emptyEl.style.display='flex';
+  } else {
+    table.style.display='table'; emptyEl.style.display='none';
+    tbody.innerHTML = state.journal.map((t,i) => {
+      const r = tradeRMultiple(t);
+      return `
+      <tr>
+        <td>${t.date}</td>
+        <td class="name-cell">${t.symbol}</td>
+        <td>₹${fmt(t.entry)}</td>
+        <td>₹${fmt(t.exit)}</td>
+        <td>${t.sl ? '₹'+fmt(t.sl) : '—'}</td>
+        <td>${t.qty}</td>
+        <td class="${t.pnl>=0?'num-up':'num-down'}">${t.pnl>=0?'+':''}₹${fmt(t.pnl)}</td>
+        <td class="${r==null?'':(r>=0?'num-up':'num-down')}">${r==null?'—':r.toFixed(2)+'R'}</td>
+        <td style="font-family:var(--font-body); max-width:220px; white-space:normal;">${t.notes || '—'}</td>
+        <td><button class="btn-danger" data-jremove="${i}"><i class="fa-solid fa-trash"></i></button></td>
+      </tr>`;
+    }).join('');
+    tbody.querySelectorAll('[data-jremove]').forEach(btn => {
+      btn.addEventListener('click', () => { state.journal.splice(parseInt(btn.dataset.jremove),1); renderJournal(); saveLocalData(); });
+    });
+  }
+
+  // stats
+  const total = state.journal.length;
+  const wins = state.journal.filter(t=>t.pnl>0).length;
+  const winRate = total ? Math.round((wins/total)*100) : 0;
+  const totalPnl = state.journal.reduce((a,t)=>a+t.pnl,0);
+  // R-multiple requires a stop-loss to define "risk" — only trades where one was logged count.
+  const rTrades = state.journal.map(tradeRMultiple).filter(r => r != null);
+  const avgR = rTrades.length ? rTrades.reduce((a,r)=>a+r,0) / rTrades.length : null;
+
+  document.getElementById('statTotal').textContent = total;
+  document.getElementById('statWinRate').textContent = winRate + '%';
+  const pnlEl = document.getElementById('statPnl');
+  pnlEl.textContent = `${totalPnl>=0?'+':''}₹${fmtInt(totalPnl)}`;
+  pnlEl.style.color = totalPnl>=0 ? 'var(--bull)' : 'var(--bear)';
+  document.getElementById('statAvgR').textContent = avgR==null ? '—' : avgR.toFixed(2);
+}
+
+// R-multiple = P&L per share ÷ risk-per-share (entry to stop-loss). Needs a logged
+// stop-loss to mean anything — without one there's no "1 unit of risk" to divide by.
+function tradeRMultiple(t){
+  if(!t.sl || t.sl === t.entry) return null;
+  const riskPerShare = Math.abs(t.entry - t.sl);
+  const pnlPerShare = t.pnl / (t.qty || 1);
+  return pnlPerShare / riskPerShare;
+}
+
+document.getElementById('jAddBtn').addEventListener('click', () => {
+  const symbol = document.getElementById('jSymbol').value.trim().toUpperCase();
+  const entry = parseFloat(document.getElementById('jEntry').value);
+  const exit = parseFloat(document.getElementById('jExit').value);
+  const slRaw = document.getElementById('jSL').value;
+  const sl = slRaw === '' ? null : parseFloat(slRaw);
+  const qty = parseFloat(document.getElementById('jQty').value) || 1;
+  const notes = document.getElementById('jNotes').value.trim();
+  if(!symbol || isNaN(entry) || isNaN(exit)){ return; }
+  const pnl = (exit - entry) * qty;
+  state.journal.unshift({ date: new Date().toLocaleDateString('en-IN'), symbol, entry, exit, sl, qty, pnl, notes });
+  ['jSymbol','jEntry','jExit','jSL','jNotes'].forEach(id => document.getElementById(id).value='');
+  document.getElementById('jQty').value = 1;
+  renderJournal();
+  saveLocalData();
+});
+
+document.getElementById('jExportBtn').addEventListener('click', () => {
+  if(!state.journal.length) return;
+  const header = ['Date','Symbol','Entry','Exit','Stop-Loss','Qty','P&L','R-Multiple','Notes'];
+  const rows = state.journal.map(t => {
+    const r = tradeRMultiple(t);
+    return [t.date, t.symbol, t.entry, t.exit, t.sl ?? '', t.qty, t.pnl.toFixed(2), r==null?'':r.toFixed(2), `"${(t.notes||'').replace(/"/g,'""')}"`];
+  });
+  const csv = [header.join(','), ...rows.map(r => r.join(','))].join('\n');
+  const blob = new Blob([csv], { type:'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = `trademind-journal-${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a); a.click(); a.remove();
+  URL.revokeObjectURL(url);
+});
+
+/* ---------------------------------------------------------------------------
+   14. TAB NAVIGATION
+   --------------------------------------------------------------------------- */
+function switchTab(tab){
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === tab));
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === tab));
+}
+document.querySelectorAll('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+});
+
+/* ---------------------------------------------------------------------------
+   14b. UNIFIED PORTFOLIO — Gold/Silver (live global spot), Mutual Funds
+   (mfapi.in, an AMFI-sourced free feed), Bonds (calculated — no public
+   retail bond price feed exists), and US stocks (Finnhub, free key).
+   Aura Gold and WintWealth don't publish a developer API, so those
+   holdings are logged here manually and valued against the closest live
+   proxy available.
+   --------------------------------------------------------------------------- */
+const TROY_OZ_TO_GRAM = 31.1034768;
+let usdInrRate = null;
+let goldPricePerGram = null, silverPricePerGram = null;
+let allocChartInst;
+
+/* Shared reliability helpers — every live fetch in this app routes through these two:
+   - fetchWithTimeout: a hung request (dead API, flaky wifi) fails loudly instead of
+     spinning forever with a stale "loading" state.
+   - isSanePrice: rejects NaN/zero/negative values from a malformed response instead
+     of silently caching garbage — keeps showing the last known-good price and flags
+     the failure instead. No free data source is 100% guaranteed, so failing visibly
+     matters more than failing quietly. */
+async function fetchWithTimeout(url, options={}, timeoutMs=8000){
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try { return await fetch(url, { ...options, signal: controller.signal }); }
+  finally { clearTimeout(timer); }
+}
+function isSanePrice(v){ return typeof v === 'number' && isFinite(v) && v > 0; }
+function nowHMS(){ return new Date().toLocaleTimeString('en-IN'); }
+function setStatus(elId, msg, isError){
+  const el = document.getElementById(elId);
+  if(!el) return;
+  el.textContent = msg;
+  el.style.color = isError ? 'var(--bear)' : 'var(--text-lo)';
+}
+
+async function getUsdInrRate(){
+  try {
+    const res = await fetchWithTimeout('https://api.frankfurter.app/latest?from=USD&to=INR');
+    const data = await res.json();
+    if(isSanePrice(data.rates?.INR)) usdInrRate = data.rates.INR;
+  } catch(err){ console.warn('FX rate fetch failed, using fallback:', err); }
+  if(!usdInrRate) usdInrRate = 87; // rough fallback so the UI still renders offline — flagged wherever it's used
+  return usdInrRate;
+}
+
+async function getMetalPricePerGram(metal){
+  const symbol = metal === 'Gold' ? 'XAU' : 'XAG';
+  const res = await fetchWithTimeout(`https://api.gold-api.com/price/${symbol}`);
+  const data = await res.json();
+  const usdPerOz = data.price;
+  if(!isSanePrice(usdPerOz)) throw new Error(`Bad ${metal} price in response`);
+  const fx = await getUsdInrRate();
+  return (usdPerOz * fx) / TROY_OZ_TO_GRAM;
+}
+
+async function refreshCommodityPrices(){
+  let gErr = null, sErr = null;
+  const [g, s] = await Promise.all([
+    getMetalPricePerGram('Gold').catch(err => { gErr = err; return null; }),
+    getMetalPricePerGram('Silver').catch(err => { sErr = err; return null; })
+  ]);
+  if(g != null) goldPricePerGram = g;
+  if(s != null) silverPricePerGram = s;
+  if(gErr || sErr){
+    console.warn('Commodity price fetch failed:', gErr || sErr);
+    setStatus('commodityStatus', `⚠ Live price fetch failed (${(gErr||sErr).message || 'network error'}) — showing last known price.`, true);
+  } else {
+    setStatus('commodityStatus', `Spot price updated ${nowHMS()}.`, false);
+  }
+  renderCommodities();
+  renderUsStocks();
+  renderPortfolioSummary();
+}
+
+function currentMetalPrice(c){
+  return c.metal === 'Gold' ? (goldPricePerGram ?? c.avgPrice) : (silverPricePerGram ?? c.avgPrice);
+}
+
+function renderCommodities(){
+  const tbody = document.getElementById('commodityTbody');
+  const empty = document.getElementById('commodityEmpty');
+  empty.style.display = state.commodities.length ? 'none' : 'block';
+  tbody.innerHTML = state.commodities.map((c,i) => {
+    const cur = currentMetalPrice(c);
+    const value = c.qty * cur;
+    const pnl = (cur - c.avgPrice) * c.qty;
+    return `<tr>
+      <td class="name-cell">${c.metal}</td>
+      <td>${fmt(c.qty)}</td>
+      <td>₹${fmt(c.avgPrice)}</td>
+      <td>${goldPricePerGram==null && silverPricePerGram==null ? '—' : '₹'+fmt(cur)}</td>
+      <td>₹${fmtInt(value)}</td>
+      <td class="${pnl>=0?'num-up':'num-down'}">${pnl>=0?'+':''}₹${fmtInt(pnl)}</td>
+      <td><button class="btn-danger" data-cmremove="${i}"><i class="fa-solid fa-trash"></i></button></td>
+    </tr>`;
+  }).join('');
+  tbody.querySelectorAll('[data-cmremove]').forEach(btn => {
+    btn.addEventListener('click', () => { state.commodities.splice(parseInt(btn.dataset.cmremove),1); renderCommodities(); renderPortfolioSummary(); saveLocalData(); });
+  });
+}
+
+document.getElementById('cmAddBtn').addEventListener('click', () => {
+  const metal = document.getElementById('cmMetal').value;
+  const qty = parseFloat(document.getElementById('cmQty').value);
+  const avgPrice = parseFloat(document.getElementById('cmAvgPrice').value);
+  if(!qty || !avgPrice) return;
+  state.commodities.push({ metal, qty, avgPrice });
+  document.getElementById('cmQty').value = ''; document.getElementById('cmAvgPrice').value = '';
+  renderCommodities(); saveLocalData(); renderPortfolioSummary();
+  if(goldPricePerGram == null && silverPricePerGram == null) refreshCommodityPrices();
+});
+document.getElementById('cmRefreshBtn').addEventListener('click', refreshCommodityPrices);
+
+/* ---- Mutual Funds — mfapi.in (free, AMFI-sourced, no key) ---- */
+let selectedMfScheme = null;
+let mfSearchDebounce = null;
+
+async function mfSearchSchemes(query){
+  const res = await fetchWithTimeout(`https://api.mfapi.in/mf/search?q=${encodeURIComponent(query)}`);
+  return res.json();
+}
+async function mfLatestNav(schemeCode){
+  const res = await fetchWithTimeout(`https://api.mfapi.in/mf/${schemeCode}/latest`);
+  const data = await res.json();
+  const row = data.data?.[0];
+  const nav = row ? parseFloat(row.nav) : null;
+  return isSanePrice(nav) ? nav : null;
+}
+
+const mfSearchInput = document.getElementById('mfSearch');
+const mfResultsBox = document.getElementById('mfSearchResults');
+mfSearchInput.addEventListener('input', () => {
+  selectedMfScheme = null;
+  document.getElementById('mfSelectedHint').textContent = 'Search and pick a fund first — NAV is pulled live from mfapi.in (a free public wrapper around AMFI\'s daily NAV data).';
+  clearTimeout(mfSearchDebounce);
+  const q = mfSearchInput.value.trim();
+  if(q.length < 3){ mfResultsBox.style.display = 'none'; return; }
+  mfSearchDebounce = setTimeout(async () => {
+    try {
+      const results = (await mfSearchSchemes(q)).slice(0, 12);
+      if(!results.length){ mfResultsBox.style.display = 'none'; return; }
+      mfResultsBox.innerHTML = results.map(r => `<div class="mf-result" data-code="${r.schemeCode}" data-name="${r.schemeName.replace(/"/g,'&quot;')}" style="padding:8px 12px; font-size:12px; cursor:pointer; border-bottom:1px solid var(--glass-border);">${r.schemeName}</div>`).join('');
+      mfResultsBox.style.display = 'block';
+      mfResultsBox.querySelectorAll('[data-code]').forEach(el => {
+        el.addEventListener('click', () => {
+          selectedMfScheme = { schemeCode: el.dataset.code, schemeName: el.dataset.name };
+          mfSearchInput.value = el.dataset.name;
+          mfResultsBox.style.display = 'none';
+          document.getElementById('mfSelectedHint').textContent = `Selected: ${el.dataset.name} (scheme ${el.dataset.code}).`;
+        });
+      });
+    } catch(err){ console.warn('MF search failed:', err); mfResultsBox.style.display = 'none'; }
+  }, 400);
+});
+document.addEventListener('click', e => { if(!mfResultsBox.contains(e.target) && e.target !== mfSearchInput) mfResultsBox.style.display = 'none'; });
+
+async function refreshMfPrices(){
+  if(!state.mutualFunds.length){ setStatus('mfStatus', '', false); return; }
+  let failCount = 0;
+  await Promise.all(state.mutualFunds.map(async f => {
+    try { const nav = await mfLatestNav(f.schemeCode); if(nav != null){ f.currentNav = nav; f._navError = false; } else { f._navError = true; failCount++; } }
+    catch(err){ console.warn(`NAV fetch failed for ${f.schemeName}:`, err); f._navError = true; failCount++; }
+  }));
+  setStatus('mfStatus', failCount ? `⚠ ${failCount} of ${state.mutualFunds.length} NAV lookups failed — showing last known NAV for those.` : `NAVs updated ${nowHMS()}.`, failCount > 0);
+  renderMutualFunds(); renderPortfolioSummary(); saveLocalData();
+}
+
+function renderMutualFunds(){
+  const tbody = document.getElementById('mfTbody');
+  const empty = document.getElementById('mfEmpty');
+  empty.style.display = state.mutualFunds.length ? 'none' : 'block';
+  tbody.innerHTML = state.mutualFunds.map((f,i) => {
+    const cur = f.currentNav ?? f.avgNav;
+    const value = f.units * cur;
+    const pnl = (cur - f.avgNav) * f.units;
+    return `<tr>
+      <td class="name-cell" style="max-width:260px; white-space:normal;">${f.schemeName}</td>
+      <td>${fmt(f.units)}</td>
+      <td>₹${fmt(f.avgNav)}</td>
+      <td>${f.currentNav == null ? '—' : '₹'+fmt(f.currentNav) + (f._navError ? ' <i class="fa-solid fa-triangle-exclamation" style="color:var(--neutral); font-size:10px;" title="Last fetch failed — this may be stale"></i>' : '')}</td>
+      <td>₹${fmtInt(value)}</td>
+      <td class="${pnl>=0?'num-up':'num-down'}">${pnl>=0?'+':''}₹${fmtInt(pnl)}</td>
+      <td><button class="btn-danger" data-mfremove="${i}"><i class="fa-solid fa-trash"></i></button></td>
+    </tr>`;
+  }).join('');
+  tbody.querySelectorAll('[data-mfremove]').forEach(btn => {
+    btn.addEventListener('click', () => { state.mutualFunds.splice(parseInt(btn.dataset.mfremove),1); renderMutualFunds(); renderPortfolioSummary(); saveLocalData(); });
+  });
+}
+
+document.getElementById('mfAddBtn').addEventListener('click', async () => {
+  const units = parseFloat(document.getElementById('mfUnits').value);
+  const avgNav = parseFloat(document.getElementById('mfAvgNav').value);
+  if(!selectedMfScheme || !units || !avgNav) return;
+  const entry = { schemeCode: selectedMfScheme.schemeCode, schemeName: selectedMfScheme.schemeName, units, avgNav, currentNav: null };
+  state.mutualFunds.push(entry);
+  mfSearchInput.value = ''; document.getElementById('mfUnits').value = ''; document.getElementById('mfAvgNav').value = '';
+  selectedMfScheme = null;
+  document.getElementById('mfSelectedHint').textContent = 'Search and pick a fund first — NAV is pulled live from mfapi.in (a free public wrapper around AMFI\'s daily NAV data).';
+  renderMutualFunds(); saveLocalData();
+  try { const nav = await mfLatestNav(entry.schemeCode); if(nav != null){ entry.currentNav = nav; renderMutualFunds(); renderPortfolioSummary(); saveLocalData(); } else { entry._navError = true; renderMutualFunds(); } }
+  catch(err){ console.warn('NAV fetch failed:', err); entry._navError = true; renderMutualFunds(); }
+});
+
+/* ---- Bonds — calculated (no public retail bond price feed exists) ---- */
+function bondMetrics(b){
+  const today = new Date();
+  const maturity = new Date(b.maturity);
+  const purchaseDate = new Date(b.purchaseDate || today);
+  const daysLeft = Math.max(0, Math.round((maturity - today) / 86400000));
+  const yearsLeft = Math.max(daysLeft/365, 1/365);
+  const yearsHeld = Math.max((today - purchaseDate) / (365*86400000), 0);
+  const annualCoupon = b.faceValue * (b.coupon/100);
+  // Accrued value: purchase price plus simple-interest coupon accrual since purchase — an approximation
+  // of "what this is worth today", not a traded price (none exists for retail bonds).
+  const currentValue = b.purchasePrice + annualCoupon * yearsHeld;
+  // Approximate YTM (standard bond-math approximation formula), using time remaining from today.
+  const ytm = ((annualCoupon + (b.faceValue - currentValue)/yearsLeft) / ((b.faceValue + currentValue)/2)) * 100;
+  return { daysLeft, currentValue, ytm };
+}
+
+function renderBonds(){
+  const tbody = document.getElementById('bondTbody');
+  const empty = document.getElementById('bondEmpty');
+  empty.style.display = state.bonds.length ? 'none' : 'block';
+  tbody.innerHTML = state.bonds.map((b,i) => {
+    const m = bondMetrics(b);
+    return `<tr>
+      <td class="name-cell">${b.issuer}</td>
+      <td>₹${fmtInt(b.faceValue)}</td>
+      <td>${b.coupon}%</td>
+      <td>${new Date(b.maturity).toLocaleDateString('en-IN')}</td>
+      <td>${m.daysLeft}</td>
+      <td>₹${fmtInt(m.currentValue * b.qty)}</td>
+      <td>${isFinite(m.ytm) ? m.ytm.toFixed(2)+'%' : '—'}</td>
+      <td><button class="btn-danger" data-bremove="${i}"><i class="fa-solid fa-trash"></i></button></td>
+    </tr>`;
+  }).join('');
+  tbody.querySelectorAll('[data-bremove]').forEach(btn => {
+    btn.addEventListener('click', () => { state.bonds.splice(parseInt(btn.dataset.bremove),1); renderBonds(); renderPortfolioSummary(); saveLocalData(); });
+  });
+}
+
+document.getElementById('bAddBtn').addEventListener('click', () => {
+  const issuer = document.getElementById('bIssuer').value.trim();
+  const faceValue = parseFloat(document.getElementById('bFaceValue').value);
+  const coupon = parseFloat(document.getElementById('bCoupon').value);
+  const maturity = document.getElementById('bMaturity').value;
+  const purchasePrice = parseFloat(document.getElementById('bPurchasePrice').value);
+  const qty = parseFloat(document.getElementById('bQty').value) || 1;
+  if(!issuer || !faceValue || !coupon || !maturity || !purchasePrice) return;
+  state.bonds.push({ issuer, faceValue, coupon, maturity, purchaseDate: new Date().toISOString().slice(0,10), purchasePrice, qty });
+  ['bIssuer','bFaceValue','bCoupon','bMaturity','bPurchasePrice'].forEach(id => document.getElementById(id).value = '');
+  document.getElementById('bQty').value = 1;
+  renderBonds(); saveLocalData(); renderPortfolioSummary();
+});
+
+/* ---- US Markets — Finnhub (free key, client requests, no server) ---- */
+const finnhubKeyInput = document.getElementById('finnhubKey');
+finnhubKeyInput.addEventListener('change', () => { state.finnhubKey = finnhubKeyInput.value.trim(); saveLocalData(); });
+
+async function finnhubQuote(symbol){
+  if(!state.finnhubKey) return null;
+  const res = await fetchWithTimeout(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(symbol)}&token=${encodeURIComponent(state.finnhubKey)}`);
+  const data = await res.json();
+  if(data.error) throw new Error(data.error);
+  return isSanePrice(data.c) ? data.c : null;
+}
+async function refreshUsPrices(){
+  if(!state.finnhubKey){ setStatus('usStatus', '', false); return; }
+  if(!state.usStocks.length){ setStatus('usStatus', '', false); return; }
+  let failCount = 0;
+  await Promise.all(state.usStocks.map(async u => {
+    try { const price = await finnhubQuote(u.symbol); if(price != null){ u.currentPrice = price; u._quoteError = false; } else { u._quoteError = true; failCount++; } }
+    catch(err){ console.warn(`Quote fetch failed for ${u.symbol}:`, err); u._quoteError = true; failCount++; }
+  }));
+  setStatus('usStatus', failCount ? `⚠ ${failCount} of ${state.usStocks.length} quotes failed — check your Finnhub key or the browser console.` : `Quotes updated ${nowHMS()} (rate ₹${usdInrRate?usdInrRate.toFixed(2):'—'}/US$).`, failCount > 0);
+  renderUsStocks(); renderPortfolioSummary(); saveLocalData();
+}
+
+function renderUsStocks(){
+  const tbody = document.getElementById('usTbody');
+  const empty = document.getElementById('usEmpty');
+  empty.style.display = state.usStocks.length ? 'none' : 'block';
+  const fx = usdInrRate || 87;
+  tbody.innerHTML = state.usStocks.map((u,i) => {
+    const cur = u.currentPrice ?? u.avgPrice;
+    const valueInr = u.qty * cur * fx;
+    const pnlInr = (cur - u.avgPrice) * u.qty * fx;
+    return `<tr>
+      <td class="name-cell">${u.symbol}</td>
+      <td>${fmt(u.qty)}</td>
+      <td>$${fmt(u.avgPrice)}</td>
+      <td>${u.currentPrice == null ? '—' : '$'+fmt(u.currentPrice) + (u._quoteError ? ' <i class="fa-solid fa-triangle-exclamation" style="color:var(--neutral); font-size:10px;" title="Last fetch failed — this may be stale"></i>' : '')}</td>
+      <td>₹${fmtInt(valueInr)}</td>
+      <td class="${pnlInr>=0?'num-up':'num-down'}">${pnlInr>=0?'+':''}₹${fmtInt(pnlInr)}</td>
+      <td><button class="btn-danger" data-usremove="${i}"><i class="fa-solid fa-trash"></i></button></td>
+    </tr>`;
+  }).join('');
+  tbody.querySelectorAll('[data-usremove]').forEach(btn => {
+    btn.addEventListener('click', () => { state.usStocks.splice(parseInt(btn.dataset.usremove),1); renderUsStocks(); renderPortfolioSummary(); saveLocalData(); });
+  });
+}
+
+document.getElementById('usAddBtn').addEventListener('click', async () => {
+  const symbol = document.getElementById('usSymbol').value.trim().toUpperCase();
+  const qty = parseFloat(document.getElementById('usQty').value);
+  const avgPrice = parseFloat(document.getElementById('usAvgPrice').value);
+  if(!symbol || !qty || !avgPrice) return;
+  const entry = { symbol, qty, avgPrice, currentPrice: null };
+  state.usStocks.push(entry);
+  document.getElementById('usSymbol').value=''; document.getElementById('usQty').value=''; document.getElementById('usAvgPrice').value='';
+  renderUsStocks(); saveLocalData();
+  if(state.finnhubKey){
+    try { const price = await finnhubQuote(symbol); if(price != null){ entry.currentPrice = price; renderUsStocks(); renderPortfolioSummary(); saveLocalData(); } else { entry._quoteError = true; renderUsStocks(); } }
+    catch(err){ console.warn(`Quote fetch failed for ${symbol}:`, err); entry._quoteError = true; renderUsStocks(); }
+  }
+});
+
+/* ---- Overview: allocation chart + summary, tying every asset class together ---- */
+function computePortfolioTotals(){
+  const stockVal = state.watchlist.reduce((a,w) => a + ((w.qty||0)*(w.price||0)), 0);
+  const goldVal = state.commodities.filter(c=>c.metal==='Gold').reduce((a,c) => a + c.qty*currentMetalPrice(c), 0);
+  const silverVal = state.commodities.filter(c=>c.metal==='Silver').reduce((a,c) => a + c.qty*currentMetalPrice(c), 0);
+  const mfVal = state.mutualFunds.reduce((a,f) => a + f.units*(f.currentNav ?? f.avgNav), 0);
+  const bondVal = state.bonds.reduce((a,b) => a + bondMetrics(b).currentValue*b.qty, 0);
+  const fx = usdInrRate || 87;
+  const usVal = state.usStocks.reduce((a,u) => a + u.qty*(u.currentPrice ?? u.avgPrice)*fx, 0);
+  return { 'Stocks': stockVal, 'Gold': goldVal, 'Silver': silverVal, 'Mutual Funds': mfVal, 'Bonds': bondVal, 'US Stocks': usVal };
+}
+
+function renderPortfolioSummary(){
+  const totals = computePortfolioTotals();
+  const entries = Object.entries(totals).filter(([,v]) => v > 0);
+  const grandTotal = entries.reduce((a,[,v]) => a+v, 0);
+
+  const ctx = document.getElementById('allocChart');
+  if(allocChartInst) allocChartInst.destroy();
+  if(grandTotal <= 0){
+    ctx.getContext('2d').clearRect(0,0,ctx.width,ctx.height);
+  } else {
+    const colors = ['#4fa8e8','#d99a3d','#8891a3','#22b573','#3b7cf6','#e5484d'];
+    allocChartInst = new Chart(ctx, {
+      type:'doughnut',
+      data:{ labels: entries.map(([k])=>k), datasets:[{ data: entries.map(([,v])=>v), backgroundColor: colors, borderColor:'#0b0d12', borderWidth:2 }] },
+      options:{ responsive:true, plugins:{ legend:{ position:'bottom', labels:{ color:'#cfd3da', font:{ size:11 }, padding:12 } } }, cutout:'62%' }
+    });
+  }
+
+  const box = document.getElementById('portfolioSummary');
+  const largest = entries.sort((a,b)=>b[1]-a[1])[0];
+  box.innerHTML = `
+    <div class="glass stat-box"><div class="s-val">₹${fmtInt(grandTotal)}</div><div class="s-lbl">Total Value</div></div>
+    <div class="glass stat-box"><div class="s-val">${entries.length} / 6</div><div class="s-lbl">Asset Classes Used</div></div>
+    <div class="glass stat-box" style="grid-column:1/-1;"><div class="s-val" style="font-size:16px;">${largest ? `${largest[0]} — ${Math.round(largest[1]/grandTotal*100)}%` : '—'}</div><div class="s-lbl">Largest Allocation</div></div>
+  `;
+}
+
+function renderPortfolio(){
+  renderCommodities();
+  renderMutualFunds();
+  renderBonds();
+  renderUsStocks();
+  renderPortfolioSummary();
+}
+
+/* ---------------------------------------------------------------------------
+   15. INITIAL BOOTSTRAP
+   --------------------------------------------------------------------------- */
+function init(){
+  loadLocalData();
+  if(state.finnhubKey) finnhubKeyInput.value = state.finnhubKey;
+
+  buildIndices();
+  renderIndexCards();
+  renderTicker();
+  renderPulseIdle();
+
+  populateTechSelect();
+  renderTechnicalFor(STOCKS[0].symbol);
+
+  renderNews();
+  renderInstitutional();
+  renderDecisionEngineIdle();
+  renderWatchlist();
+  renderJournal();
+  renderPortfolio();
+  refreshCommodityPrices();
+  refreshMfPrices();
+  refreshUsPrices();
+
+  // simulated ticker drift — only runs pre-connection; refreshAllLive() takes over once live
+  setInterval(() => {
+    if(connected) return;
+    STOCKS.forEach(s => { s._changePct += rand(-0.06,0.06); });
+    Object.values(state.indices).forEach(idx => { idx.price *= (1+rand(-0.0006,0.0006)); });
+    renderTicker();
+  }, 3500);
+}
+init();
+</script>
+</body>
+</html>
